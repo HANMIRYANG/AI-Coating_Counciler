@@ -1,0 +1,288 @@
+// Prisma schema for AI Coating Council.
+//
+// PERSISTENCE READINESS — NOT YET WIRED AT RUNTIME.
+//
+// The MVP still runs against the in-memory SessionStore
+// (`apps/web/src/lib/council/store.ts`). This schema is shape-aligned
+// with the current in-memory record types so a future `PrismaSessionStore`
+// can persist sessions, provider call summaries, and attempt logs without
+// redesigning the data model.
+//
+// Source-of-truth alignment:
+//   SessionRecord            ↔  CouncilSession
+//   ProviderCallRecord       ↔  ProviderCallLog
+//   ProviderAttemptRecord    ↔  ProviderAttemptLog
+//
+// The Document / DocumentChunk models remain Phase 2 placeholders. No
+// upload / OCR / embedding / RAG behavior is implemented.
+//
+// `ProviderAttemptLog` mirrors the per-try forensic log — it is admin /
+// debug payload and must NEVER be exposed in the public recent-session
+// summary endpoint.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CouncilSession — top-level row per AI council run
+// ─────────────────────────────────────────────────────────────────────
+model CouncilSession {
+  // identifiers
+  id               String   @id @default(cuid())
+
+  // user input
+  userPrompt       String   @db.Text
+  normalizedPrompt String?  @db.Text
+  taskType         String
+  evidenceMode     String   @default("ai_only")
+
+  // state machine
+  status           String
+  currentRound     String?
+
+  // optional final-answer metadata (filled when synthesis completes)
+  riskLevel        String?
+  confidenceScore  Float?
+
+  // timing
+  createdAt        DateTime @default(now())
+  startedAt        DateTime?
+  completedAt      DateTime?
+  deadlineAt       DateTime
+  updatedAt        DateTime @updatedAt
+
+  // failure surface
+  errorMessage     String?
+
+  // relations
+  agentResponses      AgentResponse[]
+  agentCritiques      AgentCritique[]
+  finalAnswers        FinalAnswer[]
+  providerCallLogs    ProviderCallLog[]
+  providerAttemptLogs ProviderAttemptLog[]
+
+  // recent-session list (newest first) — primary access pattern for the
+  // sidebar GET /api/council-sessions.
+  @@index([createdAt])
+  // operator filters
+  @@index([status])
+  @@index([taskType])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// AgentResponse / AgentCritique — Round 1 / Round 2 typed outputs.
+// Kept aligned with the existing in-memory shape; rawResponse /
+// parsedResponse stay debug-only (already invisible to the summary API).
+// ─────────────────────────────────────────────────────────────────────
+model AgentResponse {
+  id             String   @id @default(cuid())
+  sessionId      String
+  providerId     String
+  model          String?
+  round          String // "initial"
+  status         String
+  rawResponse    Json?
+  parsedResponse Json?
+  errorType      String?
+  errorMessage   String?
+  latencyMs      Int?
+  tokenUsage     Json?
+  createdAt      DateTime @default(now())
+
+  session CouncilSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([providerId, round])
+}
+
+model AgentCritique {
+  id             String   @id @default(cuid())
+  sessionId      String
+  providerId     String
+  model          String?
+  round          String // "critique"
+  status         String
+  rawResponse    Json?
+  parsedResponse Json?
+  errorType      String?
+  errorMessage   String?
+  latencyMs      Int?
+  createdAt      DateTime @default(now())
+
+  session CouncilSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([providerId, round])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// FinalAnswer — synthesis output; one row per session revision.
+// ─────────────────────────────────────────────────────────────────────
+model FinalAnswer {
+  id                       String   @id @default(cuid())
+  sessionId                String
+  revisionNumber           Int      @default(1)
+  status                   String
+  conclusion               String   @db.Text
+  finalMarkdown            String   @db.Text
+  businessReadyAnswer      String?  @db.Text
+  internalMemo             String?  @db.Text
+  evidenceBackedClaims     Json?
+  assumptions              Json?
+  missingEvidence          Json?
+  unsafePhrases            Json?
+  recommendedSafeWording   Json?
+  unresolvedDisagreements  Json?
+  riskLevel                String?
+  confidenceScore          Float?
+  createdAt                DateTime @default(now())
+
+  session CouncilSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ProviderCallLog — *summary* record per (provider, round). Mirrors
+// `ProviderCallRecord` in `apps/web/src/lib/council/store.ts`. There is
+// at most one row per (sessionId, providerId, round) at any time; the
+// orchestrator upserts as the call progresses (running → succeeded /
+// failed / timed_out / schema_invalid / rate_limited).
+//
+// Debug payload (rawResponse / parsedResponse) is populated ONLY when the
+// call ends in `schema_invalid`. It is never exposed by the public
+// summary endpoint — admin gating governs access (see
+// `app/api/council-sessions/[id]/route.ts`).
+// ─────────────────────────────────────────────────────────────────────
+model ProviderCallLog {
+  id             String    @id @default(cuid())
+  sessionId      String
+  providerId     String
+  round          String
+
+  // status: pending / running / succeeded / failed / timed_out /
+  //         schema_invalid / cancelled / rate_limited
+  status         String
+
+  startedAt      DateTime?
+  endedAt        DateTime?
+  latencyMs      Int?
+  timeoutMs      Int?
+  retryCount     Int       @default(0)
+  errorType      String?
+  errorMessage   String?
+
+  // Fallback-chain attribution
+  modelRequested String?
+  modelUsed      String?
+
+  // Was a 429 cooldown observed at any point during this call?
+  rateLimited    Boolean   @default(false)
+
+  // Debug payload — populated only on schema_invalid to help an operator
+  // diagnose without re-running the prompt. Out-of-band from the summary API.
+  rawResponse    String?   @db.Text
+  parsedResponse Json?
+
+  createdAt      DateTime  @default(now())
+
+  session CouncilSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // Look up all calls for a session quickly.
+  @@index([sessionId])
+  // Slice by (provider, round) — useful for "all Anthropic critiques".
+  @@index([providerId, round])
+  // Operator dashboards: "show me all timed_out / rate_limited / failed".
+  @@index([status])
+  // Upserts happen on the (sessionId, providerId, round) tuple. Mark it
+  // unique so a future PrismaSessionStore can `upsert` directly.
+  @@unique([sessionId, providerId, round])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ProviderAttemptLog — *per-attempt* forensic log. Mirrors
+// `ProviderAttemptRecord`. One row per try, including limiter-internal
+// 429 retries AND orchestrator-driven fallback-chain hops. The summary
+// for a (session, provider, round) tuple lives on `ProviderCallLog`; this
+// table is the full trail behind that summary.
+//
+// Admin / debug only — NEVER serialized into the public summary endpoint.
+// ─────────────────────────────────────────────────────────────────────
+model ProviderAttemptLog {
+  id             String   @id @default(cuid())
+  sessionId      String
+  providerId     String
+  round          String
+
+  // The model name handed to the adapter for THIS try.
+  model          String
+
+  // 0-based attempt index within this chain hop.
+  attemptIndex   Int
+  // 0-based position in the resolved fallback chain.
+  chainIndex     Int
+
+  // status: succeeded / failed / rate_limited / timed_out / schema_invalid
+  status         String
+
+  startedAt      DateTime
+  endedAt        DateTime
+  latencyMs      Int
+  timeoutMs      Int
+
+  errorType      String?
+  errorMessage   String?
+
+  retryAfterMs   Int?
+  rateLimited    Boolean  @default(false)
+
+  createdAt      DateTime @default(now())
+
+  session CouncilSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([sessionId, providerId, round])
+  // Operator dashboards: "all rate_limited attempts in the last hour", etc.
+  @@index([providerId, round, status])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 2 placeholders for RAG over internal technical documents.
+// NOT enabled. No upload / OCR / embedding / RAG behavior is implemented.
+// ─────────────────────────────────────────────────────────────────────
+
+model Document {
+  id           String   @id @default(cuid())
+  filename     String
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  category     String?
+  version      String?
+  status       String   @default("uploaded")
+  createdAt    DateTime @default(now())
+
+  chunks DocumentChunk[]
+}
+
+model DocumentChunk {
+  id         String   @id @default(cuid())
+  documentId String
+  content    String   @db.Text
+  pageNumber Int?
+  chunkIndex Int
+  metadata   Json?
+  embedding  Bytes?
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+}
