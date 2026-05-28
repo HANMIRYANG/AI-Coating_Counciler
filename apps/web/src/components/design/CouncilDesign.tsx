@@ -20,6 +20,8 @@ import { Icons, AiAvatar, type IconName } from "./icons";
 import { EVIDENCE_SOURCE_DISPLAY_LABELS } from "@/lib/council/evidenceCatalog";
 import { useRecentSessions } from "@/lib/ui/useRecentSessions";
 import type { SessionSummary } from "@/lib/council/store";
+import { EvidencePanel } from "@/components/council/EvidencePanel";
+import { RiskPhrasePanel } from "@/components/council/RiskPhrasePanel";
 
 export type ProviderCallView = {
   providerId: ProviderId;
@@ -1045,8 +1047,17 @@ function FinalAnswerCard({ answer }: { answer: FinalAnswer }) {
         </div>
         <div className="answer-body compact">
           <p>{answer.internalMemo || "별도 내부 메모가 없습니다."}</p>
-          <DetailGroup title="누락 근거" items={answer.missingEvidence} />
-          <DetailGroup title="권장 안전 표현" items={answer.recommendedSafeWording} />
+          <EvidencePanel
+            claims={answer.evidenceBackedClaims}
+            assumptions={answer.assumptions}
+            missing={answer.missingEvidence}
+          />
+          <RiskPhrasePanel
+            unsafePhrases={answer.unsafePhrases}
+            recommendedSafeWording={answer.recommendedSafeWording}
+            riskLevel={answer.riskLevel}
+            confidenceScore={answer.confidenceScore}
+          />
           <DetailGroup
             title="후속 질문"
             items={answer.followUpQuestions}
