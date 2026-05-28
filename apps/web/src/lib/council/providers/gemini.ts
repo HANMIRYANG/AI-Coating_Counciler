@@ -67,7 +67,10 @@ export class GeminiProviderAdapter implements AiProviderAdapter {
       },
     });
     try {
-      const resp = await model.generateContent(user);
+      const resp = await model.generateContent(
+        user,
+        opts.abortSignal ? { signal: opts.abortSignal } : undefined,
+      );
       const text = resp.response.text();
       return extractJsonObject(text);
     } catch (err) {

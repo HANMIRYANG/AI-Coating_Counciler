@@ -144,14 +144,16 @@ apps/web/
       models.ts                         # 모델 정책 (stable / high-accuracy / fast fallback)
       rateLimiter.ts                    # provider별 동시성/Retry-After/cooldown/health
       orchestrator.ts                   # Round 1/2/3 오케스트레이터 (Promise.allSettled)
-      store.ts                          # 인메모리 세션 저장소 (Phase 2: Prisma 교체)
+      store.ts                          # 세션 저장소 인터페이스 + 기본 인메모리 구현 (SESSION_STORE 로 분기)
+      prismaSessionStore.ts             # opt-in Prisma 백엔드 (SESSION_STORE=prisma 일 때 lazy-require)
       provider.ts                       # AiProviderAdapter 인터페이스
       providers/
         index.ts                        # registry: mock vs real 선택
         mock.ts                         # 지연/실패/timeout/hang/rate_limit 시나리오 모킹
         openai.ts / anthropic.ts / gemini.ts
       __tests__/                        # Vitest: timeout / safety / schemas / models / rateLimiter / orchestrator
-  prisma/schema.prisma                  # Phase 2 영속화용 Prisma 모델 정의
+  prisma/schema.prisma                  # Prisma 모델 정의 (영속화 활성 시 사용)
+  prisma/migrations/                    # init_council, add_final_answer_extras 등
 ```
 
 ### 로컬 실행

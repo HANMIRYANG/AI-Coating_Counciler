@@ -170,8 +170,10 @@ function finalAnswerFromRow(r: FinalAnswerRow): FinalAnswer {
     riskLevel:
       (r.riskLevel as FinalAnswer["riskLevel"] | null) ?? "low",
     confidenceScore: r.confidenceScore ?? 0.5,
-    followUpQuestions: [],
-    providerSummary: [],
+    followUpQuestions: (r.followUpQuestions as string[] | null) ?? [],
+    providerSummary:
+      (r.providerSummary as FinalAnswer["providerSummary"] | null) ?? [],
+    sessionStatus: r.sessionStatus ?? undefined,
   };
 }
 
@@ -249,6 +251,11 @@ export class PrismaSessionStore implements SessionStore {
             patch.finalAnswer.recommendedSafeWording as Prisma.InputJsonValue,
           unresolvedDisagreements:
             patch.finalAnswer.unresolvedDisagreements as Prisma.InputJsonValue,
+          followUpQuestions:
+            patch.finalAnswer.followUpQuestions as Prisma.InputJsonValue,
+          providerSummary:
+            patch.finalAnswer.providerSummary as unknown as Prisma.InputJsonValue,
+          sessionStatus: patch.finalAnswer.sessionStatus ?? null,
           riskLevel: patch.finalAnswer.riskLevel,
           confidenceScore: patch.finalAnswer.confidenceScore,
         },

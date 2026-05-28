@@ -76,6 +76,44 @@ Claude Design 산출물은 /design/claude-design-export/ 에 있습니다.
 
 ---
 
+## 현재 구현 상태 (2026-05-28)
+
+기능 우선 UI 가 먼저 들어가 있고, Claude Design 기준 리팩토링은 **Phase 1.5** 로 보류 중입니다. 권장 컴포넌트 ↔ 현재 위치 매핑:
+
+| 권장 (이 문서) | 현재 구현 위치 | 비고 |
+|---|---|---|
+| `CouncilChatLayout.tsx` | `apps/web/src/app/page.tsx` | 입력 폼 + 라우팅이 page 컴포넌트에 인라인. 리팩토링 시 분리. |
+| `RoundProgressTimeline.tsx` | `apps/web/src/components/council/RoundTimeline.tsx` | 위치만 `components/design/` 로 이동 + 디자인 적용 필요. |
+| `ProviderOpinionCard.tsx` | `apps/web/src/components/council/ProviderCard.tsx` | 동일. |
+| `CritiqueCard.tsx` | `apps/web/src/components/council/CritiquePanel.tsx` | 동일. |
+| `FinalAnswerPanel.tsx` | `apps/web/src/components/council/FinalAnswerPanel.tsx` | 동일. |
+| `EvidencePanel.tsx` | (미구현) | `evidenceBackedClaims` / `missingEvidence` 가 `FinalAnswerPanel` 내 인라인. 분리는 Phase 2. |
+| `RiskPhrasePanel.tsx` | `FinalAnswerPanel.tsx` 내 인라인 | `unsafePhrases` / `recommendedSafeWording` 표시. 별도 패널 분리는 Phase 2. |
+
+### 현재 `components/design/` 의 파일
+
+```text
+components/design/icons.tsx         # 공통 아이콘 세트
+components/design/CouncilDesign.tsx # Claude Design export 기반 프로토타입 (전체 화면)
+```
+
+`CouncilDesign.tsx` 는 디자인 export 를 React로 1차 옮긴 컴포넌트입니다. 실제 라우트(`/`, `/sessions/[id]`) 는 아직 `components/council/*` 를 사용합니다. Phase 1.5 에서 `components/design/` 로 통일 + 라우트 전환.
+
+### Claude Design export 위치
+
+```text
+design/claude-design-export/
+  index.html
+  views.jsx
+  components.jsx
+  data.jsx
+  tweaks-panel.jsx
+```
+
+원본은 수정 금지. 리팩토링 시 참고용으로만 활용.
+
+---
+
 ## 디자인 적용 시 주의사항
 
 - 기능 로직과 UI 스타일을 섞지 않는다.

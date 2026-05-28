@@ -140,8 +140,45 @@ Provider 호출이 실제로 늦게 완료되었거나, background job이 뒤늦
 4. revisionNumber를 증가시킨다.
 ```
 
-MVP에서는 late response 저장까지는 선택 사항입니다.  
-다만 데이터모델은 revision을 고려해 설계합니다.
+### MVP 구현 상태 (2026-05-28)
+
+- Late Response 큐 및 revision 라우트는 **Phase 2** 로 보류. orchestrator 는 합성 종료 시 그대로 세션을 닫습니다.
+- 데이터 모델은 미리 준비되어 있습니다 — `FinalAnswer.revisionNumber` (`apps/web/prisma/schema.prisma`) 가 존재하며, 활성 시 `PrismaSessionStore` 에 `appendLateResponse()` / 새 revision row 작성 로직과 `POST /api/council-sessions/:id/revisions` 엔드포인트를 추가하면 됩니다.
+- 따라서 현재 운영에서는 timeout 으로 cancel된 provider가 늦게 회신해도 결과는 폐기됩니다. 인지 필요.
+
+---
+
+## Per-Provider Rate Limiter
+
+> **Source of truth**: `apps/web/src/lib/council/rateLimiter.ts`.
+
+각 Provider 는 **독립된 limiter** 를 갖습니다 — Gemini 쿼터가 막혀도 Claude/GPT 호출은 막히지 않습니다. Limiter 가 cooldown 으로 들어가면 orchestrator 는 해당 provider 의 호출을 `rate_limited` 상태로 마킹하고 나머지 provider 로 세션을 계속 진행합니다.
+
+| 항목 | OpenAI | Anthropic | Gemini |
+|---|---|---|---|
+| MAX_CONCURRENT | 2 | 2 | 2 |
+| BACKOFF_MAX_MS | 8000 | 8000 | 8000 |
+| MAX_RETRIES | 2 | 2 | 2 |
+| COOLDOWN_MS | 30000 | 30000 | 30000 |
+
+환경 변수 (`.env.example:131-154`):
+
+```text
+RATE_LIMIT_OPENAI_MAX_CONCURRENT / _BACKOFF_MAX_MS / _MAX_RETRIES / _COOLDOWN_MS
+RATE_LIMIT_ANTHROPIC_…
+RATE_LIMIT_GEMINI_…
+```
+
+### 동작 요약
+
+1. 호출 직전 limiter 가 동시성 슬롯을 잡습니다 (`MAX_CONCURRENT` 초과 시 큐).
+2. SDK 가 429/quota 에러를 던지면 → `markRateLimited(provider, { retryAfterMs })`. limiter 가 `COOLDOWN_MS` (또는 `Retry-After` 헤더가 더 길면 그 값) 동안 cool down.
+3. cool down 중에는 해당 provider 의 모든 시도가 즉시 `rate_limited` 로 실패. orchestrator 는 partial completion 분류에 반영.
+4. 호출 후 슬롯 반환. health snapshot 은 `GET /api/council-sessions/:id` 응답의 `providerHealth` 에 포함됩니다.
+
+### Partial Completion 분류에 미치는 영향
+
+`rate_limited` 는 별도 상태이지만 partial completion 분류에서는 **실패로 간주** 됩니다 — limiter 가 막힌 provider 는 의견을 내지 못한 것과 같기 때문입니다. 따라서 3개 중 1개가 rate_limited 라면 결과는 `partial_completed` 가 됩니다.
 
 ---
 

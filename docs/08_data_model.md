@@ -1,9 +1,16 @@
 # 08. Data Model
 
-> **상태**: Prisma schema 는 in-memory `SessionStore` record 모양과
-> **alignment 완료** 이며, **`PrismaSessionStore` 도 구현 완료**
+> **상태 (2026-05-28)**: Prisma schema 는 in-memory `SessionStore` record
+> 모양과 **alignment 완료** 이며, **`PrismaSessionStore` 도 구현 완료**
 > (`apps/web/src/lib/council/prismaSessionStore.ts`). 런타임은 dual-mode —
-> `SESSION_STORE` 환경 변수로 선택합니다.
+> `SESSION_STORE` 환경 변수로 선택합니다. **기본값은 `memory`** 이며,
+> `prisma` 로 전환하려면 `.env` 에 `SESSION_STORE=prisma` 를 설정하고 아래
+> "활성화 절차" 를 수행해야 합니다.
+>
+> `FinalAnswer` 의 `followUpQuestions` / `providerSummary` / `sessionStatus`
+> 3 필드는 마이그레이션 `20260528120000_add_final_answer_extras` 부터
+> Prisma 에서도 round-trip 됩니다. 그 이전 스키마로 운영 중이라면 마이
+> 그레이션을 먼저 적용해야 합니다.
 
 ## 런타임 backend 선택
 

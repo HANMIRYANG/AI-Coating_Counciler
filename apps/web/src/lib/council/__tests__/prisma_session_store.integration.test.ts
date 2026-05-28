@@ -155,6 +155,43 @@ describeIf("PrismaSessionStore (integration, PRISMA_INTEGRATION=1)", () => {
     expect(got!.attempts[0].model).toBe("claude-sonnet-4-6");
   });
 
+  it("FinalAnswer round-trip preserves followUpQuestions / providerSummary / sessionStatus", async () => {
+    const id = `cs_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    createdIds.push(id);
+    await store.create(makeRecord(id));
+
+    const finalAnswer = {
+      conclusion: "조건부 적용 가능",
+      finalMarkdown: "# 결론\n조건부 적용 가능합니다.",
+      businessReadyAnswer: "업체 발송용 본문",
+      internalMemo: "내부 검토 메모",
+      evidenceBackedClaims: ["근거1", "근거2"],
+      assumptions: ["가정1"],
+      missingEvidence: ["시험성적서 필요"],
+      unsafePhrases: [
+        { phrase: "완전 차단", reason: "단정 표현", recommended: "조건부 차단" },
+      ],
+      recommendedSafeWording: ["권장 표현"],
+      unresolvedDisagreements: ["미해결1"],
+      riskLevel: "medium" as const,
+      confidenceScore: 0.62,
+      followUpQuestions: ["추가 질문 1", "추가 질문 2"],
+      providerSummary: [
+        { providerId: "openai" as const, status: "succeeded", latencyMs: 1500 },
+        { providerId: "anthropic" as const, status: "succeeded", latencyMs: 1800 },
+        { providerId: "gemini" as const, status: "timed_out" },
+      ],
+      sessionStatus: "partial_completed",
+    };
+
+    await store.update(id, { status: "completed", finalAnswer });
+    const got = await store.get(id);
+    expect(got!.finalAnswer).toBeDefined();
+    expect(got!.finalAnswer!.followUpQuestions).toEqual(finalAnswer.followUpQuestions);
+    expect(got!.finalAnswer!.providerSummary).toEqual(finalAnswer.providerSummary);
+    expect(got!.finalAnswer!.sessionStatus).toBe("partial_completed");
+  });
+
   it("listRecent returns newest-first SessionSummary entries", async () => {
     const id1 = `cs_test_${Date.now()}_a_${Math.random().toString(36).slice(2, 8)}`;
     const id2 = `cs_test_${Date.now() + 1}_b_${Math.random().toString(36).slice(2, 8)}`;

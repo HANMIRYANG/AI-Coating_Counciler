@@ -139,6 +139,9 @@ model FinalAnswer {
   unsafePhrases            Json?
   recommendedSafeWording   Json?
   unresolvedDisagreements  Json?
+  followUpQuestions        Json?
+  providerSummary          Json?
+  sessionStatus            String?
   riskLevel                String?
   confidenceScore          Float?
   createdAt                DateTime @default(now())
