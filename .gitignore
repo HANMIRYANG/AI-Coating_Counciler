@@ -35,6 +35,17 @@ prisma/migrations/dev_*
 coverage
 .vitest
 
+# Playwright
+test-results
+playwright-report
+playwright/.cache
+
+# Claude Code per-project working dir (dev-environment local).
+# Already ignored on machines that pick it up via a user-level global
+# gitignore; declared here so the classification is consistent for every
+# contributor regardless of their global git config.
+.claude/
+
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts.bak
