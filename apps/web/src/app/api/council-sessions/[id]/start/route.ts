@@ -11,9 +11,13 @@ import {
   CouncilOrchestrator,
   defaultTimingConfig,
 } from "@/lib/council/orchestrator";
+import { runAfterResponse } from "@/lib/runtime/backgroundTask";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Orchestration continues after the response — keep the function alive for it
+// on Vercel (bounded by this ceiling; see the create route for rationale).
+export const maxDuration = 300;
 
 export async function POST(
   _req: Request,
@@ -36,7 +40,7 @@ export async function POST(
     buildProviderRegistry(),
     defaultTimingConfig(),
   );
-  void orchestrator.run(params.id);
+  runAfterResponse(orchestrator.run(params.id));
 
   return NextResponse.json({ sessionId: params.id, status: "started" });
 }

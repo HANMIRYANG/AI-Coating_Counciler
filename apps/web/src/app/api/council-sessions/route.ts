@@ -23,9 +23,15 @@ import {
   CouncilOrchestrator,
   defaultTimingConfig,
 } from "@/lib/council/orchestrator";
+import { runAfterResponse } from "@/lib/runtime/backgroundTask";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// The council run continues after this route returns the session id. On
+// Vercel the function must stay alive for that background work (via
+// runAfterResponse → waitUntil), bounded by this ceiling. Keep it >= the
+// configured SESSION_TIMEOUT_MS and within your Vercel plan's limit.
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
   let body: unknown;
@@ -64,10 +70,11 @@ export async function POST(req: Request) {
   };
   await store.create(record);
 
-  // Background orchestration — DO NOT await. The `void` is intentional:
-  // the orchestrator records its own errors on the session record.
+  // Background orchestration — DO NOT await. Runs after the response via a
+  // Vercel-safe mechanism (waitUntil on Vercel, in-process elsewhere). The
+  // orchestrator records its own errors on the session record.
   const orchestrator = new CouncilOrchestrator(buildProviderRegistry(), cfg);
-  void orchestrator.run(id);
+  runAfterResponse(orchestrator.run(id));
 
   return NextResponse.json(
     { sessionId: id, status: "created" },
