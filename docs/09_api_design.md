@@ -20,6 +20,7 @@
 | `GET`  | `/api/evidence-sources` | `app/api/evidence-sources/route.ts` | 카탈로그/정책 메타데이터. 현재 `retrievalEnabled=false`. |
 | `POST` | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** text/plain·text/markdown 만 수용, 결정적 chunking 후 Prisma 영속화. PDF/DOCX/이미지 → 415. |
 | `GET`  | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** 문서 summary 목록 (chunk 본문 미포함). |
+| `GET`  | `/api/documents/search?q=...` | `app/api/documents/search/route.ts` | **Phase 2 foundation 한정.** 영속화된 chunk 본문에 대한 결정적 키워드 검색 + metadata 필터. 임베딩/벡터 검색 아님. |
 
 > 별도의 `GET /api/council-sessions/:id/final-answer` 엔드포인트는 **없습니다**. 최종 답변은 `GET /api/council-sessions/:id` 응답의 `finalAnswer` 필드로 함께 반환됩니다.
 > Phase 2 후보: `POST /api/council-sessions/:id/providers/:providerId/retry`, `GET /api/council-sessions/:id/events` (SSE) — 둘 다 미구현.
@@ -255,6 +256,41 @@ Response `200`:
 - `limit` 기본 20, 최대 100 (그 이상은 clamp).
 - `metadata` 는 intake 시 저장된 값 그대로; metadata 없이 생성된 문서는 `null`.
 - chunk 본문은 절대 포함되지 않음. 단일 문서의 chunk 본문은 Phase 2 retrieval 에서 별도 엔드포인트로 노출 예정.
+
+```http
+GET /api/documents/search?q=...&documentType=...&productName=...&issuer=...&limit=N
+```
+
+영속화된 `DocumentChunk.content` 에 대한 **결정적 키워드 검색**. 쿼리는 소문자화 → 공백 분리 → 중복 제거된 term 으로 정규화되고, 각 term 의 부분일치(대소문자 무시)로 chunk 를 매칭합니다. 점수는 `(매칭된 distinct term 수) * 100 + (총 출현 횟수)` 로 결정적입니다.
+
+- `q` **필수**. 비어있거나 공백뿐이면 `400 invalid_request`.
+- 선택 metadata 필터(`documentType` / `productName` / `issuer`)는 `Document.metadata` JSONB 키와 정확히 일치(exact match). `documentType` 은 evidence 문서 타입 enum 검증 — 잘못된 값은 `400`.
+- `limit` 기본 10, 최대 50 (그 이상은 clamp).
+- DB 미구성/미가용 → `503 database_unavailable`.
+
+Response `200`:
+
+```json
+{
+  "query": "방오 코팅",
+  "count": 1,
+  "results": [
+    {
+      "documentId": "...",
+      "filename": "kcl-report.md",
+      "chunkId": "...",
+      "chunkIndex": 0,
+      "snippet": "…방오 코팅의 부착 성능을 KCL 기준으로…",
+      "metadata": { "productName": "HE-850A", "documentType": "test_report", "issuer": "KCL" },
+      "score": 202
+    }
+  ]
+}
+```
+
+- 결과는 score 내림차순 → `documentId` 오름차순 → `chunkIndex` 오름차순으로 결정적 정렬.
+- chunk 전체 본문은 반환하지 않고 **bounded snippet** (기본 ≤160자, 첫 매치 주변) 만 포함.
+- **미구현**: 임베딩 / 벡터 유사도, evidence bundle 조립, orchestrator 연결. 후보 chunk 는 결정적 순서로 상한(200) 까지만 스캔 후 in-process 정렬.
 
 ---
 

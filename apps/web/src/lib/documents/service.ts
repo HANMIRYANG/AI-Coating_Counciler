@@ -1,11 +1,13 @@
 // Prisma-backed DocumentService.
 //
-// Foundation slice (Step 3 + Step 4):
+// Foundation slice (Step 3 + Step 4 + Step 5):
 //   - Persists the `Document` row + `DocumentChunk` rows. `embedding`
-//     stays null. No retrieval / no orchestrator wiring.
+//     stays null. No orchestrator wiring.
 //   - The validated rich metadata block (issuer / testMethod / etc.) is
-//     now persisted into `Document.metadata` (Step 4). PDF/DOCX parsing,
-//     embeddings, retrieval, and orchestrator wiring remain unimplemented.
+//     persisted into `Document.metadata` (Step 4).
+//   - `search()` adds deterministic keyword retrieval over persisted chunk
+//     content + metadata filters (Step 5). Embeddings, vector similarity,
+//     evidence-bundle assembly, and orchestrator wiring remain unimplemented.
 //
 // Error surface:
 //   `DocumentServiceError` with a typed `code`. The API route translates
@@ -18,6 +20,16 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { getPrismaClient } from "../db";
 import { chunkText, type Chunk } from "./chunker";
 import type { CreateDocumentRequest, DocumentMetadata } from "./schemas";
+import {
+  buildChunkWhere,
+  clampSearchLimit,
+  normalizeQuery,
+  rankCandidates,
+  SEARCH_CANDIDATE_CAP,
+  type DocumentSearchResult,
+  type SearchCandidate,
+  type SearchDocumentsRequest,
+} from "./search";
 
 export type DocumentServiceErrorCode =
   | "database_unavailable"
@@ -175,6 +187,55 @@ export class DocumentService {
         chunkCount: r._count.chunks,
         createdAt: r.createdAt.getTime(),
       }));
+    } catch (err) {
+      wrapDbError(err);
+    }
+  }
+
+  // Deterministic keyword search over persisted DocumentChunk content,
+  // narrowed by optional Document.metadata filters. Foundation only — no
+  // embeddings / vector similarity / retrieval-augmented assembly. Pulls a
+  // bounded, deterministically-ordered candidate set from the DB and ranks
+  // it in-process via the pure helpers in `search.ts`.
+  async search(input: SearchDocumentsRequest): Promise<DocumentSearchResult[]> {
+    const terms = normalizeQuery(input.q);
+    // Defensive: the route already rejects empty queries. With no usable
+    // terms there is nothing to match — skip the DB round-trip.
+    if (terms.length === 0) return [];
+
+    const limit = clampSearchLimit(input.limit);
+    const where = buildChunkWhere(terms, {
+      documentType: input.documentType,
+      productName: input.productName,
+      issuer: input.issuer,
+    });
+
+    try {
+      const rows = await this.prisma.documentChunk.findMany({
+        where,
+        take: SEARCH_CANDIDATE_CAP,
+        // Stable candidate ordering so the truncation point is deterministic.
+        orderBy: [{ documentId: "asc" }, { chunkIndex: "asc" }],
+        select: {
+          id: true,
+          chunkIndex: true,
+          content: true,
+          document: {
+            select: { id: true, filename: true, metadata: true },
+          },
+        },
+      });
+
+      const candidates: SearchCandidate[] = rows.map((r) => ({
+        chunkId: r.id,
+        chunkIndex: r.chunkIndex,
+        content: r.content,
+        documentId: r.document.id,
+        filename: r.document.filename,
+        metadata: (r.document.metadata as DocumentMetadata | null) ?? null,
+      }));
+
+      return rankCandidates(candidates, terms, limit);
     } catch (err) {
       wrapDbError(err);
     }

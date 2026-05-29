@@ -164,4 +164,58 @@ describeIf("DocumentService (integration, PRISMA_INTEGRATION=1)", () => {
     expect(bRow).not.toHaveProperty("chunks");
     expect(bRow).not.toHaveProperty("content");
   });
+
+  it("search finds matching chunks and metadata filters narrow results", async () => {
+    const kcl = await service.create({
+      filename: "kcl-report.md",
+      mimeType: "text/markdown",
+      content:
+        "이 시험성적서는 방오 코팅의 부착 성능을 KCL 기준으로 평가한 결과를 담고 있습니다.",
+      metadata: {
+        productName: "HE-850A",
+        documentType: "test_report",
+        issuer: "KCL",
+      },
+    });
+    createdIds.push(kcl.id);
+
+    const katsa = await service.create({
+      filename: "kats-report.md",
+      mimeType: "text/markdown",
+      content: "방오 코팅 일반 설명 자료. 발급기관은 KATS 입니다.",
+      metadata: {
+        productName: "HE-850A",
+        documentType: "catalog",
+        issuer: "KATS",
+      },
+    });
+    createdIds.push(katsa.id);
+
+    // Unfiltered keyword search hits both documents (both mention 방오).
+    const broad = await service.search({ q: "방오 코팅" });
+    const broadDocIds = new Set(broad.map((r) => r.documentId));
+    expect(broadDocIds.has(kcl.id)).toBe(true);
+    expect(broadDocIds.has(katsa.id)).toBe(true);
+    // Results carry a snippet + score, never the raw chunk body.
+    for (const r of broad) {
+      expect(typeof r.snippet).toBe("string");
+      expect(r.score).toBeGreaterThan(0);
+      expect(r).not.toHaveProperty("content");
+    }
+
+    // issuer filter narrows to the KCL document only.
+    const filtered = await service.search({ q: "방오 코팅", issuer: "KCL" });
+    const filteredDocIds = new Set(filtered.map((r) => r.documentId));
+    expect(filteredDocIds.has(kcl.id)).toBe(true);
+    expect(filteredDocIds.has(katsa.id)).toBe(false);
+
+    // documentType filter is independent and also narrows correctly.
+    const byType = await service.search({
+      q: "방오 코팅",
+      documentType: "catalog",
+    });
+    const byTypeDocIds = new Set(byType.map((r) => r.documentId));
+    expect(byTypeDocIds.has(katsa.id)).toBe(true);
+    expect(byTypeDocIds.has(kcl.id)).toBe(false);
+  });
 });
