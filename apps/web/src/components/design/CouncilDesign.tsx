@@ -701,7 +701,10 @@ export function SessionWorkspace({
                   )}
 
                   {data.finalAnswer ? (
-                    <FinalAnswerCard answer={data.finalAnswer} />
+                    <FinalAnswerCard
+                      answer={data.finalAnswer}
+                      sessionId={sessionId}
+                    />
                   ) : (
                     <div className="status-footer">
                       <span className="ai-streaming">
@@ -988,7 +991,13 @@ function VerifyCard({ answer }: { answer: FinalAnswer }) {
   );
 }
 
-function FinalAnswerCard({ answer }: { answer: FinalAnswer }) {
+function FinalAnswerCard({
+  answer,
+  sessionId,
+}: {
+  answer: FinalAnswer;
+  sessionId: string;
+}) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     await navigator.clipboard?.writeText(answer.businessReadyAnswer);
@@ -1037,7 +1046,14 @@ function FinalAnswerCard({ answer }: { answer: FinalAnswer }) {
           <button className="btn" type="button">
             <Icons.Mail /> 메일 초안
           </button>
-          <button className="btn" type="button">
+          <a
+            className="btn"
+            href={`/api/council-sessions/${sessionId}/export?format=markdown`}
+            download={`council-session-${sessionId}.md`}
+          >
+            <Icons.Download /> MD 내보내기
+          </a>
+          <button className="btn" type="button" disabled>
             <Icons.Download /> PDF 저장
           </button>
           <button className="btn primary" type="button">

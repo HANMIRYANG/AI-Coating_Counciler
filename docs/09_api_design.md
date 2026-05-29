@@ -17,6 +17,7 @@
 | `GET`  | `/api/council-sessions?limit=N` | `app/api/council-sessions/route.ts` | 최근 세션 summary 목록 (newest first) |
 | `GET`  | `/api/council-sessions/:id` | `app/api/council-sessions/[id]/route.ts` | 세션 스냅샷 (의견·비판·**최종 답변** + **evidence preview** 포함). `?debug=1` 옵션. |
 | `POST` | `/api/council-sessions/:id/start` | `app/api/council-sessions/[id]/start/route.ts` | idempotent 명시적 시작 (이미 시작했으면 no-op) |
+| `GET`  | `/api/council-sessions/:id/export?format=markdown` | `app/api/council-sessions/[id]/export/route.ts` | 완료 세션의 안전한 Markdown 내보내기 (최종 답변·내부 메모·근거 커버리지 포함). PDF/DOCX 미구현. |
 | `GET`  | `/api/evidence-sources` | `app/api/evidence-sources/route.ts` | 카탈로그/정책 메타데이터. 현재 `retrievalEnabled=false`. |
 | `POST` | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** text/plain·text/markdown 만 수용, 결정적 chunking 후 Prisma 영속화. PDF/DOCX/이미지 → 415. |
 | `GET`  | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** 문서 summary 목록 (chunk 본문 미포함). |
@@ -193,6 +194,23 @@ POST /api/council-sessions/:id/start
 - `Create Session` 시점에 오케스트레이션이 자동 시작되므로 일반적인 흐름에서는 호출할 필요가 없습니다.
 - 이미 `status !== "created"` 인 경우 `200 alreadyStarted: true`로 응답하고 새 작업을 시작하지 않습니다.
 - `404 not_found` — 세션 없음.
+
+---
+
+### Export Session (Markdown, Step 12)
+
+```http
+GET /api/council-sessions/:id/export?format=markdown
+```
+
+완료된 세션을 **안전한 Markdown 문서**로 내보냅니다. 결정적(deterministic) 출력이며, 다음을 포함합니다: 세션 헤더(id/taskType/evidenceMode/status), 사용자 질문, 최종 결론, 업체 발송용 답변, 내부 메모, 근거 있는 주장/추정/누락 근거, 위험 표현/권장 안전 표현, **근거 커버리지**(`evidenceCoverageStatus` + `evidenceUsed` 참조 + 근거 연결/부족 주장), provider 요약.
+
+- `format` 기본값 `markdown` (`md` 도 허용). 그 외 → `400 invalid_format`.
+- 세션 없음 → `404 not_found`.
+- `finalAnswer` 아직 없음 → `409 not_ready`.
+- 성공 → `200`, `Content-Type: text/markdown; charset=utf-8`, `Content-Disposition: attachment; filename="council-session-<id>.md"`.
+- **제외**: raw provider 응답, parsed 디버그 페이로드, attempt 로그, chunk 전체 본문, 내부 전용 토큰. (builder 가 큐레이션된 필드만 읽음.)
+- **미구현**: PDF / DOCX 내보내기.
 
 ---
 

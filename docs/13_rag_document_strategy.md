@@ -1,6 +1,6 @@
 # 13. RAG Document Strategy
 
-> **현재 구현 상태 (2026-05-29, Step 3/4/5/6/7/8/9/10/11 foundation)**
+> **현재 구현 상태 (2026-05-29, Step 3/4/5/6/7/8/9/10/11/12 foundation)**
 >
 > 구현됨:
 > - **텍스트 전용 intake**: `POST /api/documents` 가 `text/plain` 과 `text/markdown` 만 수용. PDF/DOCX/이미지/기타 바이너리는 `415` 로 거부.
@@ -15,6 +15,7 @@
 > - **세션 UI evidence preview 표시 (Step 9)** (`components/council/EvidencePreviewPanel.tsx` + `evidencePreviewView.ts`): 세션 화면에서 `evidencePreview` 를 패널로 노출(상태/후보 목록/메타데이터/신뢰수준/snippet). `ok`/`no_matches`/`unavailable`/`failed` 상태별 표시, `ai_only`/`not_requested` 는 패널 비표시. **UI/상태 투명성 전용이며, 최종 답변의 citation 렌더링은 미구현.** chunk 전체 본문은 표시하지 않음.
 > - **최종 답변 evidence usage 계약 (Step 10)** (`schemas.ts` + `evidenceUsage.ts` + Prisma `FinalAnswer`): `FinalAnswer` 에 `evidenceUsed`/`coveredClaims`/`uncoveredClaims`/`evidenceCoverageStatus` 를 추가(모두 optional/default, 하위호환). orchestrator 가 세션 evidence preview 로부터 결정론적으로 채움 — ai_only→`not_requested`, ok+모델매핑없음→보수적 `partial`(preview 후보를 참조로), no_matches→`no_evidence`, unavailable/failed→`unavailable`. `sufficient` 는 모델이 명시적으로 산출한 경우에만. **shape 정의/영속화만 구현.**
 > - **최종 답변 evidence 커버리지 UI (Step 11)** (`components/council/FinalEvidenceCoveragePanel.tsx` + `finalEvidenceCoverageView.ts`): 내부 검토용 카드에서 Step 10 계약을 표시 전용으로 시각화 — 상태 라벨(`not_requested`/`no_evidence`/`partial`/`sufficient`/`unavailable`), evidence 참조(`filename #chunkIndex · 신뢰수준 · 검증상태`), 근거 연결/부족 주장. `not_requested` 는 비표시, 비충분 상태는 검토 경고 표시. chunk 전체 본문·내부 ID 비노출. **검증된 citation 강제·모델 재검증·의미 기반 RAG 는 여전히 미구현.**
+> - **세션 Markdown 내보내기 (Step 12)** (`lib/council/sessionMarkdown.ts` + `GET /api/council-sessions/:id/export?format=markdown` + UI "MD 내보내기" 버튼): 완료 세션을 결정적 Markdown 으로 내보냄. 최종 답변/내부 메모/누락 근거/위험 표현과 함께 **근거 커버리지**(`evidenceCoverageStatus`/`evidenceUsed`/covered·uncovered claims)를 포함. raw provider 응답·디버그·attempt 로그·chunk 본문은 제외. **PDF/DOCX 내보내기는 미구현.**
 >
 > 미구현 (범위 밖):
 > - **PDF / DOCX 파서**: 모두 415 로 거부됨.

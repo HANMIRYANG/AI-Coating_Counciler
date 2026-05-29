@@ -139,6 +139,10 @@ Round 3 최종 합의안
 - evidence 참조는 `filename #chunkIndex · 신뢰수준 · 검증상태` 만 표시하고, chunk 전체 본문과 내부 ID 는 노출하지 않습니다(내부 ID 는 React key 로만 사용).
 - 기존 근거/누락근거/위험 패널 옆에 카드 중첩 없이(detail-group) 배치하며, 모바일에서 넘치지 않도록 유동 레이아웃을 유지합니다.
 
+#### Markdown 내보내기 (Step 12)
+
+최종 답변 카드의 액션 영역에 **"MD 내보내기"** 버튼을 추가합니다(기존 버튼과 동일한 `.btn` 패턴, 큰 신규 섹션 없음). 버튼은 `GET /api/council-sessions/:id/export?format=markdown` 를 다운로드 링크(`<a download>`)로 열며, 최종 답변·내부 메모·누락 근거·위험 표현·근거 커버리지를 포함한 리뷰 아티팩트(Markdown)를 내려받습니다. PDF/DOCX 내보내기는 아직 제공하지 않습니다(기존 "PDF 저장" 버튼은 비활성).
+
 ---
 
 ## 디자인 톤
