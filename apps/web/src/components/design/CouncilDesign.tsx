@@ -23,6 +23,7 @@ import type { SessionSummary } from "@/lib/council/store";
 import { EvidencePanel } from "@/components/council/EvidencePanel";
 import { RiskPhrasePanel } from "@/components/council/RiskPhrasePanel";
 import { EvidencePreviewPanel } from "@/components/council/EvidencePreviewPanel";
+import { FinalEvidenceCoveragePanel } from "@/components/council/FinalEvidenceCoveragePanel";
 import type { SessionEvidencePreview } from "@/lib/council/evidencePreview";
 
 export type ProviderCallView = {
@@ -1063,6 +1064,7 @@ function FinalAnswerCard({ answer }: { answer: FinalAnswer }) {
             riskLevel={answer.riskLevel}
             confidenceScore={answer.confidenceScore}
           />
+          <FinalEvidenceCoveragePanel answer={answer} />
           <DetailGroup
             title="후속 질문"
             items={answer.followUpQuestions}

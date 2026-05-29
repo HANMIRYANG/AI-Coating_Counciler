@@ -124,6 +124,21 @@ Round 3 최종 합의안
 
 근거, 불확실성, 추가 확인 자료, 위험 문구를 포함합니다.
 
+#### 근거 커버리지 표시 (Step 11)
+
+내부 검토용 카드 안에 **최종 답변 evidence 커버리지 블록**(`FinalEvidenceCoveragePanel`)을 추가로 표시합니다. Step 10 evidence usage 계약(`evidenceCoverageStatus`/`evidenceUsed`/`coveredClaims`/`uncoveredClaims`)을 표시 전용으로 시각화합니다(검증된 citation 강제·모델 재검증 없음).
+
+```text
+- not_requested (ai_only) → 표시 안 함 (조용한 상태)
+- sufficient              → "근거 충분" (양호 톤)
+- partial                 → "부분 근거" + claim 단위 매핑 미검증, 사람 검토 경고
+- no_evidence             → "근거 없음" + 추가 문서 확보 경고
+- unavailable             → "근거 불가" + 추가 확인 경고
+```
+
+- evidence 참조는 `filename #chunkIndex · 신뢰수준 · 검증상태` 만 표시하고, chunk 전체 본문과 내부 ID 는 노출하지 않습니다(내부 ID 는 React key 로만 사용).
+- 기존 근거/누락근거/위험 패널 옆에 카드 중첩 없이(detail-group) 배치하며, 모바일에서 넘치지 않도록 유동 레이아웃을 유지합니다.
+
 ---
 
 ## 디자인 톤
