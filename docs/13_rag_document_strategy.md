@@ -1,6 +1,6 @@
 # 13. RAG Document Strategy
 
-> **현재 구현 상태 (2026-05-29, Step 3/4/5/6/7/8/9/10/11/12 foundation)**
+> **현재 구현 상태 (2026-05-29, Step 3/4/5/6/7/8/9/10/11/12/14 foundation)**
 >
 > 구현됨:
 > - **텍스트 전용 intake**: `POST /api/documents` 가 `text/plain` 과 `text/markdown` 만 수용. PDF/DOCX/이미지/기타 바이너리는 `415` 로 거부.
@@ -17,8 +17,10 @@
 > - **최종 답변 evidence 커버리지 UI (Step 11)** (`components/council/FinalEvidenceCoveragePanel.tsx` + `finalEvidenceCoverageView.ts`): 내부 검토용 카드에서 Step 10 계약을 표시 전용으로 시각화 — 상태 라벨(`not_requested`/`no_evidence`/`partial`/`sufficient`/`unavailable`), evidence 참조(`filename #chunkIndex · 신뢰수준 · 검증상태`), 근거 연결/부족 주장. `not_requested` 는 비표시, 비충분 상태는 검토 경고 표시. chunk 전체 본문·내부 ID 비노출. **검증된 citation 강제·모델 재검증·의미 기반 RAG 는 여전히 미구현.**
 > - **세션 Markdown 내보내기 (Step 12)** (`lib/council/sessionMarkdown.ts` + `GET /api/council-sessions/:id/export?format=markdown` + UI "MD 내보내기" 버튼): 완료 세션을 결정적 Markdown 으로 내보냄. 최종 답변/내부 메모/누락 근거/위험 표현과 함께 **근거 커버리지**(`evidenceCoverageStatus`/`evidenceUsed`/covered·uncovered claims)를 포함. raw provider 응답·디버그·attempt 로그·chunk 본문은 제외. **PDF/DOCX 내보내기는 미구현.**
 >
+> - **Vercel Blob 원본 파일 저장 foundation (Step 14)** (`lib/documents/blobStorage.ts` + `POST /api/documents/blob/upload` + `Document.originalBlob*` 컬럼): 대용량 바이너리 원본(PDF/DOCX 등)을 Vercel Blob client-upload 흐름으로 저장하고 메타데이터만 DB 에 남김(`status: "original_uploaded"`, chunk 없음). 원본 blob URL 은 내부값으로 목록/검색/evidence 에 노출 안 함. **원본 저장만 구현 — 추출/파싱/RAG 는 미구현.** 기존 인라인 text/markdown intake(256KB)는 변경 없음.
+>
 > 미구현 (범위 밖):
-> - **PDF / DOCX 파서**: 모두 415 로 거부됨.
+> - **PDF / DOCX 파서**: 인라인 intake 에서는 415 로 거부됨. Blob 에 원본을 저장해도 파싱/추출/chunking 은 하지 않음.
 > - **임베딩 / 벡터 인덱스**: `DocumentChunk.embedding` 사용 안 함. 검색은 키워드 부분일치만.
 > - **벡터 / 의미 기반 retrieval, 최종 RAG retrieval pipeline**.
 > - **검증된 citation 생성 / citation 렌더링 UI**: 스니펫은 후보일 뿐 확정 인용이 아니며, 출력 JSON 스키마는 변경되지 않음.

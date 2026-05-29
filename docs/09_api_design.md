@@ -23,6 +23,7 @@
 | `GET`  | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** 문서 summary 목록 (chunk 본문 미포함). |
 | `GET`  | `/api/documents/search?q=...` | `app/api/documents/search/route.ts` | **Phase 2 foundation 한정.** 영속화된 chunk 본문에 대한 결정적 키워드 검색 + metadata 필터. 임베딩/벡터 검색 아님. |
 | `GET`  | `/api/documents/evidence?query=...` | `app/api/documents/evidence/route.ts` | **Phase 2 foundation 한정.** 키워드 검색 결과를 내부문서 evidence 후보로 정규화. orchestrator 미연결. |
+| `POST` | `/api/documents/blob/upload` | `app/api/documents/blob/upload/route.ts` | **Phase 2 foundation 한정.** Vercel Blob client-upload 핸들러 — 대용량 원본(PDF/DOCX 등) 저장. 파싱/추출/chunking 없음. `BLOB_READ_WRITE_TOKEN` 필요. |
 
 > 별도의 `GET /api/council-sessions/:id/final-answer` 엔드포인트는 **없습니다**. 최종 답변은 `GET /api/council-sessions/:id` 응답의 `finalAnswer` 필드로 함께 반환됩니다.
 > Phase 2 후보: `POST /api/council-sessions/:id/providers/:providerId/retry`, `GET /api/council-sessions/:id/events` (SSE) — 둘 다 미구현.
@@ -380,6 +381,21 @@ Response `200`:
 - `retrievalStatus` 는 후보가 있으면 `ok`, 없으면 `no_matches`.
 - chunk 전체 본문은 포함하지 않고 bounded snippet 만 전달. 정렬 순서는 검색 결과 순서를 그대로 보존.
 - **미구현**: 임베딩 / 벡터 유사도, 최종 RAG retrieval, evidence bundle → orchestrator 핸드오프.
+
+```http
+POST /api/documents/blob/upload
+Content-Type: application/json
+```
+
+**Vercel Blob client-upload 핸들러 (Step 14)** — 대용량 **원본 파일**(PDF/DOCX 등)을 브라우저에서 Vercel Blob 으로 직접 업로드하기 위한 토큰 발급 + 완료 콜백 라우트입니다. 파일 본문이 Next.js 라우트를 경유하지 않습니다(`handleUpload`).
+
+- `BLOB_READ_WRITE_TOKEN` 미설정 → `503 blob_not_configured`.
+- JSON 파싱 실패 → `400 invalid_json`.
+- 토큰 발급 전 `clientPayload`(`{ filename, contentType, sizeBytes }`)를 검증: 미지원 content type / 크기 초과(기본 25MB) / 형식 오류 → `400 blob_upload_error`.
+- 업로드 완료 시(`onUploadCompleted`, Vercel → 서버 webhook) 원본 메타데이터를 `Document` 행(`status: "original_uploaded"`, **chunk 없음**)에 영속화.
+- 클라이언트는 `@vercel/blob/client` 의 `upload(pathname, file, { handleUploadUrl: "/api/documents/blob/upload", clientPayload })` 로 호출합니다. `pathname` 은 `buildOriginalBlobPathname(filename)` 사용 권장.
+- **원본 blob URL 은 내부값** 입니다 — 목록/검색/evidence 응답에 노출하지 않습니다.
+- **미구현**: PDF/DOCX 파싱, OCR, 바이너리 원본 chunking/임베딩/검색, 공개 다운로드 UI. 기존 인라인 `text/plain`·`text/markdown` intake(256KB)는 변경 없음.
 
 ---
 

@@ -293,6 +293,18 @@ model Document {
   // for retrieval. Unknown keys are stripped by the Zod schema before this
   // column is written.
   metadata     Json?
+
+  // Original-file storage (Step 14, Vercel Blob foundation). Populated when a
+  // large binary original (PDF/DOCX/etc.) is uploaded via the client-upload
+  // flow. NULL for the existing inline text/markdown intake path. The blob
+  // URL is internal — NOT exposed in list/search/evidence responses. No
+  // extraction/parsing/RAG over these originals yet.
+  originalBlobUrl         String?
+  originalBlobPath        String?
+  originalBlobSizeBytes   Int?
+  originalBlobContentType String?
+  originalUploadedAt      DateTime?
+
   createdAt    DateTime @default(now())
 
   chunks DocumentChunk[]

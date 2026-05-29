@@ -73,6 +73,7 @@ Vercel Project → Settings → Environment Variables 에 설정합니다.
 | `RATE_LIMIT_*` | 선택 | provider별 동시성/쿨다운 |
 | `NEXT_PUBLIC_POLLING_INTERVAL_MS` | 선택 | 클라이언트 polling 간격 (빌드 타임 인라인) |
 | `ADMIN_DEBUG_TOKEN` | 권장 | `?debug=1` 페이로드 보호. 미설정 시 운영(`NODE_ENV=production`)에서는 debug 차단 |
+| `BLOB_READ_WRITE_TOKEN` | 원본 업로드 시 | Vercel Blob 스토어 read-write 토큰. `POST /api/documents/blob/upload` 가 사용. 미설정 시 해당 라우트 `503`. |
 
 > `ADMIN_DEBUG_TOKEN` 을 설정하지 않으면 운영에서 `?debug=1` 이 자동 차단되어 raw/forensic
 > 페이로드가 노출되지 않습니다. 신뢰 네트워크 밖에 노출하기 전 반드시 검토하세요.
@@ -89,12 +90,24 @@ Vercel Project → Settings → Environment Variables 에 설정합니다.
 
 ---
 
-## 4. 대용량 원본 파일 저장 (계획만, 미구현)
+## 4. 대용량 원본 파일 저장 (Vercel Blob, Step 14)
 
-- 현재 문서 intake 는 **`text/plain` / `text/markdown` 인라인 본문**만 받으며, 크기 상한은
-  기존 `MAX_DOCUMENT_BYTES`(256KB UTF-8) 그대로입니다. PDF/DOCX/이미지는 415 로 거부됩니다.
-- 향후 대용량 원본(PDF 스캔 등)은 **Vercel Blob** 에 저장하고 메타데이터만 DB 에 남기는
-  경로를 계획합니다. **이번 단계에서는 Blob 업로드 API/UI 를 구현하지 않습니다.**
+- 현재 **인라인 문서 intake** (`POST /api/documents`) 는 여전히 **`text/plain` / `text/markdown`**
+  본문만 받으며, 크기 상한은 기존 `MAX_DOCUMENT_BYTES`(256KB UTF-8) 그대로입니다. PDF/DOCX/
+  이미지는 인라인 경로에서 415 로 거부됩니다.
+- 대용량 **바이너리 원본**(PDF/DOCX/이미지 등)은 **Vercel Blob** 에 client-upload 흐름으로
+  저장합니다:
+  - 라우트: `POST /api/documents/blob/upload` (`@vercel/blob/client` 의 `handleUpload`). 파일
+    본문은 라우트를 경유하지 않고 브라우저 → Blob 으로 직접 업로드됩니다.
+  - 토큰 발급 전에 filename / content type / size(기본 상한 25MB)를 검증합니다.
+  - 업로드 완료 시 원본 메타데이터를 `Document`(`status: "original_uploaded"`, **chunk 없음**)에
+    영속화하고, blob URL 은 내부값으로만 보관합니다(목록/검색/evidence 비노출).
+- **Blob 스토어는 PRIVATE 접근**으로 생성하는 것을 권장합니다(시험성적서 등 기밀 가능). 코드는
+  blob URL 을 공개 응답에 노출하지 않습니다.
+- 설정: Vercel 대시보드에서 Blob 스토어 생성 후 `BLOB_READ_WRITE_TOKEN` 을 환경변수로
+  추가합니다. 미설정 시 업로드 라우트는 `503` 을 반환합니다.
+- **미구현**: 원본에 대한 파싱/OCR/추출, 바이너리 chunking/임베딩/검색, 공개 다운로드 UI.
+  Blob 은 현재 **원본 보관 전용**입니다.
 
 ---
 

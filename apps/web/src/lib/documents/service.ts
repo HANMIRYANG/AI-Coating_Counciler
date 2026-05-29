@@ -20,6 +20,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { getPrismaClient } from "../db";
 import { chunkText, type Chunk } from "./chunker";
 import type { CreateDocumentRequest, DocumentMetadata } from "./schemas";
+import { toOriginalBlobMetadata } from "./blobStorage";
 import {
   buildChunkWhere,
   clampSearchLimit,
@@ -236,6 +237,49 @@ export class DocumentService {
       }));
 
       return rankCandidates(candidates, terms, limit);
+    } catch (err) {
+      wrapDbError(err);
+    }
+  }
+
+  // Persist a large binary ORIGINAL uploaded to Vercel Blob (Step 14).
+  // Creates a Document row holding only the blob metadata — NO chunks are
+  // created (binary parsing / extraction is not implemented). The blob URL
+  // is internal and is never surfaced by list / search / evidence.
+  async recordOriginalUpload(input: {
+    filename: string;
+    contentType: string;
+    sizeBytes: number;
+    blobUrl: string;
+    blobPath: string;
+    uploadedAt?: Date;
+  }): Promise<{ id: string }> {
+    const meta = toOriginalBlobMetadata({
+      url: input.blobUrl,
+      pathname: input.blobPath,
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+      uploadedAt: input.uploadedAt ?? new Date(),
+    });
+    try {
+      const created = await this.prisma.document.create({
+        data: {
+          filename: input.filename,
+          originalName: input.filename,
+          mimeType: input.contentType,
+          sizeBytes: input.sizeBytes,
+          // Distinct status so these binary originals are never mistaken for
+          // the chunked text intake path.
+          status: "original_uploaded",
+          originalBlobUrl: meta.originalBlobUrl,
+          originalBlobPath: meta.originalBlobPath,
+          originalBlobSizeBytes: meta.originalBlobSizeBytes,
+          originalBlobContentType: meta.originalBlobContentType,
+          originalUploadedAt: meta.originalUploadedAt,
+        },
+        select: { id: true },
+      });
+      return { id: created.id };
     } catch (err) {
       wrapDbError(err);
     }

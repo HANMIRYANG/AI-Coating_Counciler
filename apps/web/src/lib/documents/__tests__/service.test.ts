@@ -56,3 +56,50 @@ describe("DocumentService.create — metadata persistence", () => {
     expect(args.data.metadata).not.toBe(Prisma.JsonNull);
   });
 });
+
+describe("DocumentService.recordOriginalUpload — Blob original (Step 14)", () => {
+  it("persists blob metadata as an original_uploaded document with no chunks", async () => {
+    const { service, createMock } = makeService();
+    const uploadedAt = new Date(1_700_000_000_000);
+
+    const { id } = await service.recordOriginalUpload({
+      filename: "report.pdf",
+      contentType: "application/pdf",
+      sizeBytes: 2048,
+      blobUrl: "https://blob.vercel-storage.com/documents/originals/report-x.pdf",
+      blobPath: "documents/originals/report-x.pdf",
+      uploadedAt,
+    });
+    expect(id).toBe("doc_1");
+
+    const args = createMock.mock.calls[0][0] as CreateArgs;
+    expect(args.data).toMatchObject({
+      filename: "report.pdf",
+      originalName: "report.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 2048,
+      status: "original_uploaded",
+      originalBlobUrl:
+        "https://blob.vercel-storage.com/documents/originals/report-x.pdf",
+      originalBlobPath: "documents/originals/report-x.pdf",
+      originalBlobSizeBytes: 2048,
+      originalBlobContentType: "application/pdf",
+      originalUploadedAt: uploadedAt,
+    });
+    // No chunks are created for a binary original.
+    expect(args.data).not.toHaveProperty("chunks");
+  });
+
+  it("defaults uploadedAt when omitted", async () => {
+    const { service, createMock } = makeService();
+    await service.recordOriginalUpload({
+      filename: "a.pdf",
+      contentType: "application/pdf",
+      sizeBytes: 1,
+      blobUrl: "https://blob/x",
+      blobPath: "documents/originals/a.pdf",
+    });
+    const args = createMock.mock.calls[0][0] as CreateArgs;
+    expect(args.data.originalUploadedAt).toBeInstanceOf(Date);
+  });
+});
