@@ -133,7 +133,7 @@ Vercel Project → Settings → Environment Variables 에 설정합니다.
 ## 6. 범위 밖 (이번 단계 미구현)
 
 - PDF/DOCX 파싱
-- 실제 Blob 업로드 API/UI
+- Blob 업로드 UI / 공개 다운로드 UI
 - 임베딩 / 벡터 검색
 - 외부 웹 조회
 - 큐(provider) 통합
