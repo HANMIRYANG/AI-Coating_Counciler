@@ -152,6 +152,19 @@ testMethod / substrate 등)을 영속화합니다. unknown 키는 `DocumentMetad
 retrieval 에는 사용되지 않습니다. `DocumentChunk.embedding` 은 여전히 미사용
 (null) 입니다.
 
+`FinalAnswer` 는 **evidence usage 계약 (Step 10)** 컬럼을 추가로 영속화합니다.
+모두 nullable JSON/text 이며 기존 행과 하위호환됩니다.
+
+```text
+evidenceUsed            JSONB  -- EvidenceUsedRef[] (chunkId/filename/chunkIndex/trustLevel/verificationStatus) — chunk 본문 미포함
+coveredClaims           JSONB  -- { claim, evidenceChunkIds[] }[]
+uncoveredClaims         JSONB  -- string[]
+evidenceCoverageStatus  TEXT   -- not_requested | no_evidence | partial | sufficient | unavailable
+```
+
+orchestrator 가 세션 evidence preview 로부터 결정론적으로 채웁니다. citation
+렌더링 UI / 검증된 citation 강제는 아직 미구현입니다.
+
 ---
 
 ## ProviderCallLog vs ProviderAttemptLog

@@ -83,6 +83,40 @@ export const ProviderCritiqueSchema = z.object({
 });
 export type ProviderCritique = z.infer<typeof ProviderCritiqueSchema>;
 
+// ── Evidence usage contract (Step 10) ─────────────────────────────────
+// Structured, bounded references so the system can LATER render citations
+// and claim coverage. This step defines + persists the shape only — there
+// is no citation UI and no verified-citation enforcement yet. No full chunk
+// bodies: references point at a chunk by id/filename/index only.
+
+export const EvidenceCoverageStatusSchema = z.enum([
+  "not_requested", // ai_only — evidence retrieval was never requested
+  "no_evidence", // retrieval ran but matched nothing
+  "partial", // some evidence retrieved; claim-level mapping not verified
+  "sufficient", // explicit model-asserted full coverage (never auto-set)
+  "unavailable", // retrieval failed / database unavailable
+]);
+export type EvidenceCoverageStatus = z.infer<
+  typeof EvidenceCoverageStatusSchema
+>;
+
+// Lightweight pointer to an evidence candidate (no chunk body).
+export const EvidenceUsedRefSchema = z.object({
+  chunkId: z.string(),
+  filename: z.string(),
+  chunkIndex: z.number().int().nonnegative(),
+  trustLevel: z.string().optional(),
+  verificationStatus: z.string().optional(),
+});
+export type EvidenceUsedRef = z.infer<typeof EvidenceUsedRefSchema>;
+
+export const CoveredClaimSchema = z.object({
+  claim: z.string(),
+  // chunkIds of the evidence references that back this claim.
+  evidenceChunkIds: z.array(z.string()).default([]),
+});
+export type CoveredClaim = z.infer<typeof CoveredClaimSchema>;
+
 export const FinalAnswerSchema = z.object({
   conclusion: z.string().min(1),
   finalMarkdown: z.string().min(1),
@@ -107,6 +141,13 @@ export const FinalAnswerSchema = z.object({
     )
     .default([]),
   sessionStatus: z.string().optional(),
+  // Evidence usage contract (Step 10). All optional/defaulted so existing
+  // provider outputs (which omit them) remain valid. Populated
+  // deterministically by the orchestrator from the session evidence preview.
+  evidenceUsed: z.array(EvidenceUsedRefSchema).default([]),
+  coveredClaims: z.array(CoveredClaimSchema).default([]),
+  uncoveredClaims: z.array(z.string()).default([]),
+  evidenceCoverageStatus: EvidenceCoverageStatusSchema.default("not_requested"),
 });
 export type FinalAnswer = z.infer<typeof FinalAnswerSchema>;
 

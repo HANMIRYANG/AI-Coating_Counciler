@@ -177,6 +177,13 @@ function finalAnswerFromRow(r: FinalAnswerRow): FinalAnswer {
     providerSummary:
       (r.providerSummary as FinalAnswer["providerSummary"] | null) ?? [],
     sessionStatus: r.sessionStatus ?? undefined,
+    evidenceUsed: (r.evidenceUsed as FinalAnswer["evidenceUsed"] | null) ?? [],
+    coveredClaims:
+      (r.coveredClaims as FinalAnswer["coveredClaims"] | null) ?? [],
+    uncoveredClaims: (r.uncoveredClaims as string[] | null) ?? [],
+    evidenceCoverageStatus:
+      (r.evidenceCoverageStatus as FinalAnswer["evidenceCoverageStatus"] | null) ??
+      "not_requested",
   };
 }
 
@@ -268,6 +275,14 @@ export class PrismaSessionStore implements SessionStore {
           sessionStatus: patch.finalAnswer.sessionStatus ?? null,
           riskLevel: patch.finalAnswer.riskLevel,
           confidenceScore: patch.finalAnswer.confidenceScore,
+          evidenceUsed:
+            patch.finalAnswer.evidenceUsed as unknown as Prisma.InputJsonValue,
+          coveredClaims:
+            patch.finalAnswer.coveredClaims as unknown as Prisma.InputJsonValue,
+          uncoveredClaims:
+            patch.finalAnswer.uncoveredClaims as Prisma.InputJsonValue,
+          evidenceCoverageStatus:
+            patch.finalAnswer.evidenceCoverageStatus ?? null,
         },
       });
     }

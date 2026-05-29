@@ -1,6 +1,6 @@
 # 13. RAG Document Strategy
 
-> **현재 구현 상태 (2026-05-29, Step 3/4/5/6/7/8/9 foundation)**
+> **현재 구현 상태 (2026-05-29, Step 3/4/5/6/7/8/9/10 foundation)**
 >
 > 구현됨:
 > - **텍스트 전용 intake**: `POST /api/documents` 가 `text/plain` 과 `text/markdown` 만 수용. PDF/DOCX/이미지/기타 바이너리는 `415` 로 거부.
@@ -13,6 +13,7 @@
 > - **세션 단위 evidence retrieval preview (Step 7)** (`lib/council/evidencePreview.ts` + orchestrator preflight + `GET /api/council-sessions/:id`): `evidenceMode !== "ai_only"` 세션은 시작 시 bounded·timeout-safe preflight 로 내부 evidence bundle 을 1회 조회하고, 그 상태(`not_requested`/`ok`/`no_matches`/`unavailable`/`failed`)와 bounded 후보(최대 5, snippet 만)를 세션 스냅샷에 노출. 검색 실패/무매칭이어도 세션은 계속 진행. `ai_only` 동작은 정확히 그대로 유지.
 > - **프롬프트 단위 내부 evidence 컨텍스트 주입 (Step 8)** (`prompts.ts: formatEvidenceContextBlock` + orchestrator): Step 7 preview 후보를 Round 1/2/3 provider 프롬프트에 **읽기 전용 컨텍스트**(결정적 한국어 블록)로 주입. `ok` 면 bounded 후보(filename/chunkIndex/snippet/metadata/trust/verification — documentId/chunkId·전체 본문 제외)를 나열하고, `no_matches`/`unavailable`/`failed` 면 "사내 문서 근거 부족" 명시 지침을 제공. provider 는 스니펫을 '후보'로만 사용하고 미입증 주장은 assumptions/missingEvidence 로 분류하도록 지시받음. **키워드-스니펫 컨텍스트이며, 의미 기반 RAG 나 검증된 citation 생성이 아님.** `ai_only` 프롬프트는 byte 단위로 동일하게 유지.
 > - **세션 UI evidence preview 표시 (Step 9)** (`components/council/EvidencePreviewPanel.tsx` + `evidencePreviewView.ts`): 세션 화면에서 `evidencePreview` 를 패널로 노출(상태/후보 목록/메타데이터/신뢰수준/snippet). `ok`/`no_matches`/`unavailable`/`failed` 상태별 표시, `ai_only`/`not_requested` 는 패널 비표시. **UI/상태 투명성 전용이며, 최종 답변의 citation 렌더링은 미구현.** chunk 전체 본문은 표시하지 않음.
+> - **최종 답변 evidence usage 계약 (Step 10)** (`schemas.ts` + `evidenceUsage.ts` + Prisma `FinalAnswer`): `FinalAnswer` 에 `evidenceUsed`/`coveredClaims`/`uncoveredClaims`/`evidenceCoverageStatus` 를 추가(모두 optional/default, 하위호환). orchestrator 가 세션 evidence preview 로부터 결정론적으로 채움 — ai_only→`not_requested`, ok+모델매핑없음→보수적 `partial`(preview 후보를 참조로), no_matches→`no_evidence`, unavailable/failed→`unavailable`. `sufficient` 는 모델이 명시적으로 산출한 경우에만. **shape 정의/영속화만 구현하며, citation 렌더링 UI 와 검증된 citation 강제는 미구현.**
 >
 > 미구현 (범위 밖):
 > - **PDF / DOCX 파서**: 모두 415 로 거부됨.

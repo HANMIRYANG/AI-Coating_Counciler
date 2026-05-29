@@ -182,6 +182,19 @@ describeIf("PrismaSessionStore (integration, PRISMA_INTEGRATION=1)", () => {
         { providerId: "gemini" as const, status: "timed_out" },
       ],
       sessionStatus: "partial_completed",
+      // Evidence usage contract (Step 10) — round-trips through JSON columns.
+      evidenceUsed: [
+        {
+          chunkId: "chunk_1",
+          filename: "kcl-report.md",
+          chunkIndex: 0,
+          trustLevel: "uploaded_copy",
+          verificationStatus: "auto_extracted",
+        },
+      ],
+      coveredClaims: [{ claim: "근거1", evidenceChunkIds: ["chunk_1"] }],
+      uncoveredClaims: ["시험성적서 필요"],
+      evidenceCoverageStatus: "partial" as const,
     };
 
     await store.update(id, { status: "completed", finalAnswer });
@@ -190,6 +203,10 @@ describeIf("PrismaSessionStore (integration, PRISMA_INTEGRATION=1)", () => {
     expect(got!.finalAnswer!.followUpQuestions).toEqual(finalAnswer.followUpQuestions);
     expect(got!.finalAnswer!.providerSummary).toEqual(finalAnswer.providerSummary);
     expect(got!.finalAnswer!.sessionStatus).toBe("partial_completed");
+    expect(got!.finalAnswer!.evidenceCoverageStatus).toBe("partial");
+    expect(got!.finalAnswer!.evidenceUsed).toEqual(finalAnswer.evidenceUsed);
+    expect(got!.finalAnswer!.coveredClaims).toEqual(finalAnswer.coveredClaims);
+    expect(got!.finalAnswer!.uncoveredClaims).toEqual(finalAnswer.uncoveredClaims);
   });
 
   it("listRecent returns newest-first SessionSummary entries", async () => {

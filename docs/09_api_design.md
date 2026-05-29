@@ -161,6 +161,11 @@ Response `200` (요약):
 ```
 
 - `finalAnswer` 는 합성 라운드가 끝나면 `FinalAnswer` (Zod schema 참고) 객체로 채워집니다.
+- `finalAnswer` 에는 **evidence usage 계약 (Step 10)** 필드가 포함됩니다(모두 optional/default 이므로 기존 응답과 하위호환):
+  - `evidenceUsed`: `{ chunkId, filename, chunkIndex, trustLevel?, verificationStatus? }[]` — chunk 본문 미포함.
+  - `coveredClaims`: `{ claim, evidenceChunkIds[] }[]`.
+  - `uncoveredClaims`: `string[]`.
+  - `evidenceCoverageStatus`: `not_requested | no_evidence | partial | sufficient | unavailable`. ai_only → `not_requested`. internal_docs + ok preview 인데 모델 매핑이 없으면 보수적으로 `partial`. `sufficient` 는 모델이 명시적으로 산출한 경우에만 사용(자동 설정 안 함). **citation 렌더링 UI / 검증된 citation 강제는 미구현.**
 - `evidencePreview` 는 **세션 단위 내부문서 evidence 검색 preview (Step 7)** 입니다.
   - `evidenceMode: "ai_only"` → `retrievalStatus: "not_requested"`, 후보 없음 (기본 동작 동일).
   - `internal_docs` (및 `internal_docs_web`) → orchestrator 가 세션 시작 시 **bounded preflight** 로 내부 evidence bundle 을 1회 조회. 결과: `ok` / `no_matches`, DB 미가용·timeout 시 `unavailable`, 기타 오류 시 `failed`. **어떤 경우에도 council 세션은 계속 진행됩니다.**

@@ -18,6 +18,7 @@ import type {
   SynthesisInput,
 } from "../types";
 import {
+  FinalAnswerSchema,
   type FinalAnswer,
   type ProviderCritique,
   type ProviderOpinion,
@@ -323,7 +324,10 @@ function buildMockSynthesis(
     "구체적인 적용 검토를 위해 적용 대상의 사용 환경/요구 사양/관련 인증 요구사항을 공유 부탁드리며, 시험성적서 확보 후 단계적으로 안내드리겠습니다.",
   ].join("\n\n");
 
-  return {
+  // Parse through the schema so the new evidence-usage fields (Step 10)
+  // pick up their defaults — the literal below intentionally omits them, and
+  // the orchestrator populates the real contract afterward.
+  return FinalAnswerSchema.parse({
     conclusion,
     finalMarkdown: [
       `## 최종 합의 결론`,
@@ -372,5 +376,5 @@ function buildMockSynthesis(
       status: "succeeded",
     })),
     sessionStatus: opinionCount === 3 ? "completed" : "partial_completed",
-  };
+  });
 }

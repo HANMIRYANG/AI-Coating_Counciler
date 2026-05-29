@@ -363,3 +363,101 @@ describe("evidence context injection into provider calls", () => {
     expect(COMPLETED.has(final?.status ?? "")).toBe(true);
   });
 });
+
+// ── Step 10: the final answer carries the evidence usage contract ──────
+
+describe("final answer evidence usage contract", () => {
+  it("ai_only → evidenceCoverageStatus not_requested, no references", async () => {
+    const store = createMemorySessionStore();
+    const sess = session("ai_only");
+    await store.create(sess);
+
+    const o = new CouncilOrchestrator(
+      registry(),
+      fastTiming(),
+      store,
+      stubEvidence(vi.fn()),
+    );
+    await o.run(sess.id);
+
+    const final = await store.get(sess.id);
+    expect(final?.finalAnswer?.evidenceCoverageStatus).toBe("not_requested");
+    expect(final?.finalAnswer?.evidenceUsed).toEqual([]);
+  });
+
+  it("internal_docs ok preview (model omits mapping) → conservative partial with refs", async () => {
+    const store = createMemorySessionStore();
+    const sess = session("internal_docs");
+    await store.create(sess);
+
+    const o = new CouncilOrchestrator(
+      registry(),
+      fastTiming(),
+      store,
+      stubEvidence(
+        vi.fn().mockResolvedValue({
+          normalizedQuery: "q",
+          retrievalMode: "internal_documents_keyword",
+          retrievalStatus: "ok",
+          count: 2,
+          candidates: [candidate(0), candidate(1)],
+        }),
+      ),
+    );
+    await o.run(sess.id);
+
+    const final = await store.get(sess.id);
+    expect(final?.finalAnswer?.evidenceCoverageStatus).toBe("partial");
+    expect(final?.finalAnswer?.evidenceUsed.length).toBeGreaterThanOrEqual(1);
+    // Never auto-sufficient.
+    expect(final?.finalAnswer?.evidenceCoverageStatus).not.toBe("sufficient");
+  });
+
+  it("internal_docs no_matches → no_evidence", async () => {
+    const store = createMemorySessionStore();
+    const sess = session("internal_docs");
+    await store.create(sess);
+
+    const o = new CouncilOrchestrator(
+      registry(),
+      fastTiming(),
+      store,
+      stubEvidence(
+        vi.fn().mockResolvedValue({
+          normalizedQuery: "q",
+          retrievalMode: "internal_documents_keyword",
+          retrievalStatus: "no_matches",
+          count: 0,
+          candidates: [],
+        }),
+      ),
+    );
+    await o.run(sess.id);
+
+    const final = await store.get(sess.id);
+    expect(final?.finalAnswer?.evidenceCoverageStatus).toBe("no_evidence");
+  });
+
+  it("internal_docs unavailable → unavailable", async () => {
+    const store = createMemorySessionStore();
+    const sess = session("internal_docs");
+    await store.create(sess);
+
+    const o = new CouncilOrchestrator(
+      registry(),
+      fastTiming(),
+      store,
+      stubEvidence(
+        vi
+          .fn()
+          .mockRejectedValue(
+            new DocumentServiceError("database_unavailable", "down"),
+          ),
+      ),
+    );
+    await o.run(sess.id);
+
+    const final = await store.get(sess.id);
+    expect(final?.finalAnswer?.evidenceCoverageStatus).toBe("unavailable");
+  });
+});

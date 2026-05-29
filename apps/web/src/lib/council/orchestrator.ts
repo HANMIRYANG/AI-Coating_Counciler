@@ -71,6 +71,7 @@ import {
   unavailablePreview,
   type SessionEvidencePreview,
 } from "./evidencePreview";
+import { applyEvidenceUsage } from "./evidenceUsage";
 
 export type TimingConfig = {
   providerTimeoutMs: number;
@@ -255,7 +256,7 @@ export class CouncilOrchestrator {
         evidenceContext,
       };
 
-      const finalAns = await this.runSynthesis(
+      const synthesized = await this.runSynthesis(
         sessionId,
         synthInput,
         r1ok,
@@ -263,6 +264,12 @@ export class CouncilOrchestrator {
         accuracyMode,
         sessionDeadline,
       );
+
+      // Populate the deterministic evidence usage contract (Step 10) from the
+      // session evidence preview. ai_only → not_requested; ok preview with no
+      // model mapping → conservative partial; no_matches/unavailable/failed →
+      // reflected. Never auto-asserts "sufficient".
+      const finalAns = applyEvidenceUsage(synthesized, evidencePreview);
 
       // ─── Final state ────────────────────────────────────────────────
       // Fix 3: reflect Round 2 outcome — a "completed" session requires both

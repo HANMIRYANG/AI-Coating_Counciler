@@ -149,6 +149,15 @@ model FinalAnswer {
   sessionStatus            String?
   riskLevel                String?
   confidenceScore          Float?
+
+  // Evidence usage contract (Step 10). Bounded references — no chunk bodies.
+  // Defines/persists the shape so citations + claim coverage can be rendered
+  // later. No citation UI / verified-citation enforcement yet.
+  evidenceUsed             Json?
+  coveredClaims            Json?
+  uncoveredClaims          Json?
+  evidenceCoverageStatus   String?
+
   createdAt                DateTime @default(now())
 
   session CouncilSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
