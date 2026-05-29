@@ -13,7 +13,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MockProviderAdapter } from "../providers/mock";
 import { CouncilOrchestrator, defaultTimingConfig, type TimingConfig } from "../orchestrator";
 import { createMemorySessionStore, newSessionId, type SessionRecord } from "../store";
-import type { ProviderId, EvidenceMode } from "../types";
+import type { ProviderId, EvidenceMode, EvidenceContext } from "../types";
+import type { AiProviderAdapter } from "../provider";
 import { DocumentServiceError } from "@/lib/documents/service";
 import type {
   EvidenceBundle,
@@ -237,6 +238,128 @@ describe("evidence preflight", () => {
     const final = await store.get(sess.id);
     expect(final?.evidencePreview?.retrievalStatus).toBe("failed");
     expect(final?.evidencePreview?.errorMessage).toMatch(/kaboom/);
+    expect(COMPLETED.has(final?.status ?? "")).toBe(true);
+  });
+});
+
+// ── Step 8: the evidence context reaches every provider call ───────────
+
+// Wrap mock adapters so we can capture the evidenceContext each round
+// received without re-implementing the provider schemas.
+function capturingRegistry() {
+  const captured: Record<
+    ProviderId,
+    { initial?: EvidenceContext; critique?: EvidenceContext; synthesis?: EvidenceContext }
+  > = { gemini: {}, anthropic: {}, openai: {} };
+
+  const wrap = (id: ProviderId): AiProviderAdapter => {
+    const inner = new MockProviderAdapter(id, {
+      delayMs: 20,
+      failureMode: "ok",
+      displayName: `${id} (test)`,
+      model: `${id}-test`,
+    });
+    return {
+      id: inner.id,
+      displayName: inner.displayName,
+      model: inner.model,
+      generateInitialOpinion: (input, opts) => {
+        captured[id].initial = input.evidenceContext;
+        return inner.generateInitialOpinion(input, opts);
+      },
+      generateCritique: (input, opts) => {
+        captured[id].critique = input.evidenceContext;
+        return inner.generateCritique(input, opts);
+      },
+      generateSynthesis: (input, opts) => {
+        captured[id].synthesis = input.evidenceContext;
+        return inner.generateSynthesis!(input, opts);
+      },
+    };
+  };
+
+  return {
+    registry: { gemini: wrap("gemini"), anthropic: wrap("anthropic"), openai: wrap("openai") },
+    captured,
+  };
+}
+
+describe("evidence context injection into provider calls", () => {
+  it("internal_docs passes the ok preview into all three rounds", async () => {
+    const store = createMemorySessionStore();
+    const sess = session("internal_docs");
+    await store.create(sess);
+
+    const { registry: reg, captured } = capturingRegistry();
+    const o = new CouncilOrchestrator(
+      reg,
+      fastTiming(),
+      store,
+      stubEvidence(
+        vi.fn().mockResolvedValue({
+          normalizedQuery: "q",
+          retrievalMode: "internal_documents_keyword",
+          retrievalStatus: "ok",
+          count: 1,
+          candidates: [candidate(0)],
+        }),
+      ),
+    );
+    await o.run(sess.id);
+
+    // Round 1 + Round 2 run all three providers → context present each time.
+    expect(captured.gemini.initial?.retrievalStatus).toBe("ok");
+    expect(captured.gemini.critique?.retrievalStatus).toBe("ok");
+    expect(captured.gemini.initial?.candidates[0].chunkId).toBe("c0");
+
+    // Synthesis runs on a single chosen provider — at least one captured it.
+    const synthContexts = [
+      captured.gemini.synthesis,
+      captured.anthropic.synthesis,
+      captured.openai.synthesis,
+    ].filter(Boolean);
+    expect(synthContexts.length).toBeGreaterThanOrEqual(1);
+    expect(synthContexts[0]?.retrievalStatus).toBe("ok");
+  });
+
+  it("ai_only passes NO evidence context (undefined) into provider calls", async () => {
+    const store = createMemorySessionStore();
+    const sess = session("ai_only");
+    await store.create(sess);
+
+    const { registry: reg, captured } = capturingRegistry();
+    const buildSpy = vi.fn();
+    const o = new CouncilOrchestrator(reg, fastTiming(), store, stubEvidence(buildSpy));
+    await o.run(sess.id);
+
+    expect(buildSpy).not.toHaveBeenCalled();
+    expect(captured.gemini.initial).toBeUndefined();
+    expect(captured.gemini.critique).toBeUndefined();
+    expect(captured.gemini.synthesis).toBeUndefined();
+  });
+
+  it("unavailable evidence still injects an (unavailable) context and completes", async () => {
+    const store = createMemorySessionStore();
+    const sess = session("internal_docs");
+    await store.create(sess);
+
+    const { registry: reg, captured } = capturingRegistry();
+    const o = new CouncilOrchestrator(
+      reg,
+      fastTiming(),
+      store,
+      stubEvidence(
+        vi
+          .fn()
+          .mockRejectedValue(
+            new DocumentServiceError("database_unavailable", "Can't reach DB"),
+          ),
+      ),
+    );
+    await o.run(sess.id);
+
+    expect(captured.gemini.initial?.retrievalStatus).toBe("unavailable");
+    const final = await store.get(sess.id);
     expect(COMPLETED.has(final?.status ?? "")).toBe(true);
   });
 });

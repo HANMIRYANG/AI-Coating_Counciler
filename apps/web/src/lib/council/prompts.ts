@@ -8,11 +8,13 @@
 
 import type {
   CritiqueInput,
+  EvidenceContext,
   InitialOpinionInput,
   SynthesisInput,
   TaskType,
 } from "./types";
 import { DOMAIN_SAFETY_POLICY_SUMMARY, UNSAFE_PHRASES_KO } from "./safety";
+import type { DocumentMetadata } from "@/lib/documents/schemas";
 
 const JSON_RULES_KO = `반드시 다음 규칙을 지키세요.
 - 응답은 오직 단 하나의 JSON 객체여야 합니다. 그 외 텍스트(설명, 인사, 코드블록 표시)를 포함하지 마세요.
@@ -74,11 +76,11 @@ export function taskTypeGuidance(taskType: TaskType): string {
     case "document_based_answer":
       return `taskType=document_based_answer (문서 기반 답변 모드)
 - 이 모드는 사내 기술자료/시험성적서 등 업로드 문서를 근거로 답변하도록 설계되었습니다.
-- 그러나 현재 시스템은 RAG/문서 검색/외부 출처 조회를 아직 구현하지 않았습니다.
-  (evidenceMode가 internal_docs 또는 internal_docs_web 이라도 실제 문서 컨텍스트는 전달되지 않습니다.)
+- 현재 시스템은 의미 기반 RAG/벡터 검색/외부 출처 조회를 아직 구현하지 않았습니다.
+  evidenceMode가 internal_docs 이면 키워드 검색 기반 "사내 문서 근거 컨텍스트"(스니펫 후보)가 프롬프트에 함께 제공될 수 있으나, 이는 검증된 최종 근거가 아닙니다.
 - 따라서 이 모드에서는 다음을 반드시 지키세요:
-  * evidenceBackedClaims는 사용자가 프롬프트 본문에 직접 적어준 사실에 한정.
-  * missingEvidence의 첫 항목은 "사내 문서가 업로드/검색되지 않아 근거가 부족합니다" 로 시작하세요.
+  * evidenceBackedClaims는 사용자가 프롬프트 본문에 직접 적어준 사실, 또는 제공된 스니펫이 직접 뒷받침하는 항목에 한정.
+  * 사내 문서 근거 컨텍스트가 없거나 검색 결과가 부족하면 missingEvidence에 "사내 문서가 업로드/검색되지 않아 근거가 부족합니다" 로 시작하는 항목을 두세요.
   * recommendedAnswer는 "문서가 첨부되면 다시 검토 필요" 어조로 작성하세요.
   * 단정 표현 금지. 임의의 시험 수치/인증 번호를 만들어내지 마세요.`;
 
@@ -111,6 +113,86 @@ export function taskTypeGuidance(taskType: TaskType): string {
   }
 }
 
+// Compact, deterministic rendering of a candidate's metadata. Fixed key
+// order so output is byte-for-byte stable. Omits absent fields.
+function formatEvidenceMetadata(metadata: DocumentMetadata | null): string {
+  if (!metadata) return "";
+  const parts: string[] = [];
+  if (metadata.productName) parts.push(`product=${metadata.productName}`);
+  if (metadata.documentType) parts.push(`type=${metadata.documentType}`);
+  if (metadata.issuer) parts.push(`issuer=${metadata.issuer}`);
+  if (metadata.testMethod) parts.push(`testMethod=${metadata.testMethod}`);
+  if (metadata.substrate) parts.push(`substrate=${metadata.substrate}`);
+  if (metadata.coatingThickness)
+    parts.push(`thickness=${metadata.coatingThickness}`);
+  return parts.length > 0 ? ` (${parts.join(", ")})` : "";
+}
+
+const EVIDENCE_BLOCK_HEADER =
+  "사내 문서 근거 컨텍스트 (내부 문서 키워드 검색 기반 — 검증된 최종 근거가 아님):";
+
+// Shared usage rules appended to every evidence block. Keeps providers from
+// treating snippets as certified proof.
+const EVIDENCE_USAGE_RULES_KO = [
+  "- 아래 스니펫은 내부 문서 '후보'이며 인증/시험 결과의 확정 증거가 아닙니다.",
+  "- 스니펫 또는 metadata가 직접 뒷받침하지 않는 주장은 evidenceBackedClaims에 넣지 말고 assumptions 또는 missingEvidence로 분류하세요.",
+  "- 스니펫/metadata가 직접 명시하지 않는 한 인증·성능·안전 단정 표현을 만들지 마세요.",
+];
+
+const EVIDENCE_STATUS_MESSAGE_KO: Record<string, string> = {
+  no_matches: "내부 문서 검색 결과가 없습니다.",
+  unavailable: "내부 문서 검색을 일시적으로 사용할 수 없습니다.",
+  failed: "내부 문서 검색에 실패했습니다.",
+};
+
+/**
+ * Deterministically render a `SessionEvidencePreview` into a compact Korean
+ * evidence block for injection into a provider prompt.
+ *
+ *   - `not_requested` / undefined (ai_only) → "" (block omitted entirely so
+ *     the ai_only prompt is unchanged).
+ *   - `ok` → lists the bounded preview candidates (snippet + metadata +
+ *     trust/verification). Internal identifiers (documentId/chunkId) are
+ *     intentionally NOT rendered.
+ *   - `no_matches` / `unavailable` / `failed` → explicit missing-evidence
+ *     guidance so the provider records the gap instead of inventing claims.
+ *
+ * Pure + deterministic: fixed ordering, no clocks, no randomness.
+ */
+export function formatEvidenceContextBlock(ctx?: EvidenceContext): string {
+  if (!ctx || ctx.retrievalStatus === "not_requested") return "";
+
+  if (ctx.retrievalStatus === "ok") {
+    const lines = ctx.candidates.map((c, i) => {
+      const meta = formatEvidenceMetadata(c.metadata);
+      return `${i + 1}. [${c.filename} #${c.chunkIndex}] trust=${c.trustLevel}, verification=${c.verificationStatus}${meta}\n   스니펫: ${c.snippet}`;
+    });
+    return [
+      EVIDENCE_BLOCK_HEADER,
+      `검색 상태: ok (총 ${ctx.count}건 중 ${ctx.candidates.length}건 표시)`,
+      ...EVIDENCE_USAGE_RULES_KO,
+      "후보 목록:",
+      ...lines,
+    ].join("\n");
+  }
+
+  const statusMessage =
+    EVIDENCE_STATUS_MESSAGE_KO[ctx.retrievalStatus] ??
+    "내부 문서 근거가 충분하지 않습니다.";
+  return [
+    EVIDENCE_BLOCK_HEADER,
+    `검색 상태: ${ctx.retrievalStatus} — ${statusMessage}`,
+    `- 내부 문서 근거가 부족하므로 missingEvidence에 "사내 문서 근거 부족(검색 ${ctx.retrievalStatus})"을 명시하세요.`,
+    "- 인증·성능·안전 단정 표현을 만들지 말고, 추가 문서 확보 필요를 명시하세요.",
+  ].join("\n");
+}
+
+// Append the evidence block to a user message body when non-empty.
+function withEvidenceBlock(userBody: string, ctx?: EvidenceContext): string {
+  const block = formatEvidenceContextBlock(ctx);
+  return block ? `${userBody}\n\n${block}` : userBody;
+}
+
 export function buildInitialOpinionMessages(
   providerLabel: string,
   input: InitialOpinionInput,
@@ -141,10 +223,13 @@ ${JSON_RULES_KO}
 
 특히 다음 한국어 표현은 unsafePhrases에 반드시 포함하세요: ${KNOWN_DANGEROUS_PHRASES_LIST}`;
 
-  const user = `taskType: ${input.taskType}
+  const user = withEvidenceBlock(
+    `taskType: ${input.taskType}
 evidenceMode: ${input.evidenceMode}
 사용자 질문:
-${input.userPrompt}`;
+${input.userPrompt}`,
+    input.evidenceContext,
+  );
 
   return { system, user };
 }
@@ -185,12 +270,15 @@ ${JSON_RULES_KO}
 
 위험 표현은 ${KNOWN_DANGEROUS_PHRASES_LIST} 등이 포함되어 있는지 반드시 점검하세요.`;
 
-  const user = `taskType: ${input.taskType}
+  const user = withEvidenceBlock(
+    `taskType: ${input.taskType}
 사용자 질문:
 ${input.userPrompt}
 
 다른 AI들의 Round 1 의견:
-${opinionsBlock}`;
+${opinionsBlock}`,
+    input.evidenceContext,
+  );
 
   return { system, user };
 }
@@ -242,7 +330,8 @@ ${JSON_RULES_KO}
   "providerSummary": [{ "providerId": "openai"|"anthropic"|"gemini", "status": string, "latencyMs"?: number }]
 }`;
 
-  const user = `taskType: ${input.taskType}
+  const user = withEvidenceBlock(
+    `taskType: ${input.taskType}
 사용자 질문:
 ${input.userPrompt}
 
@@ -250,7 +339,9 @@ Round 1 의견:
 ${opinionsBlock}
 
 Round 2 비판:
-${critiquesBlock}`;
+${critiquesBlock}`,
+    input.evidenceContext,
+  );
 
   return { system, user };
 }

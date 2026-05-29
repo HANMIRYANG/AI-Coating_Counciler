@@ -1,6 +1,6 @@
 # 13. RAG Document Strategy
 
-> **현재 구현 상태 (2026-05-29, Step 3/4/5/6/7 foundation)**
+> **현재 구현 상태 (2026-05-29, Step 3/4/5/6/7/8 foundation)**
 >
 > 구현됨:
 > - **텍스트 전용 intake**: `POST /api/documents` 가 `text/plain` 과 `text/markdown` 만 수용. PDF/DOCX/이미지/기타 바이너리는 `415` 로 거부.
@@ -11,12 +11,14 @@
 > - **키워드 검색 foundation (Step 5)** (`lib/documents/search.ts` + `GET /api/documents/search`): 영속화된 `DocumentChunk.content` 에 대한 결정적 키워드 매칭 + `Document.metadata` (documentType / productName / issuer) 필터. 점수·정렬·snippet 모두 순수 결정적. 임베딩/벡터 검색 아님.
 > - **내부 evidence bundle foundation (Step 6)** (`lib/documents/evidence-bundle.ts` + `GET /api/documents/evidence`): 키워드 검색 결과를 내부문서 evidence 후보로 정규화. council evidence 어휘(`trustLevel: uploaded_copy`, `verificationStatus: auto_extracted`) 재사용. 결정적·bounded, chunk 전체 본문 미포함.
 > - **세션 단위 evidence retrieval preview (Step 7)** (`lib/council/evidencePreview.ts` + orchestrator preflight + `GET /api/council-sessions/:id`): `evidenceMode !== "ai_only"` 세션은 시작 시 bounded·timeout-safe preflight 로 내부 evidence bundle 을 1회 조회하고, 그 상태(`not_requested`/`ok`/`no_matches`/`unavailable`/`failed`)와 bounded 후보(최대 5, snippet 만)를 세션 스냅샷에 노출. 검색 실패/무매칭이어도 세션은 계속 진행. `ai_only` 동작은 정확히 그대로 유지.
+> - **프롬프트 단위 내부 evidence 컨텍스트 주입 (Step 8)** (`prompts.ts: formatEvidenceContextBlock` + orchestrator): Step 7 preview 후보를 Round 1/2/3 provider 프롬프트에 **읽기 전용 컨텍스트**(결정적 한국어 블록)로 주입. `ok` 면 bounded 후보(filename/chunkIndex/snippet/metadata/trust/verification — documentId/chunkId·전체 본문 제외)를 나열하고, `no_matches`/`unavailable`/`failed` 면 "사내 문서 근거 부족" 명시 지침을 제공. provider 는 스니펫을 '후보'로만 사용하고 미입증 주장은 assumptions/missingEvidence 로 분류하도록 지시받음. **키워드-스니펫 컨텍스트이며, 의미 기반 RAG 나 검증된 citation 생성이 아님.** `ai_only` 프롬프트는 byte 단위로 동일하게 유지.
 >
 > 미구현 (범위 밖):
 > - **PDF / DOCX 파서**: 모두 415 로 거부됨.
 > - **임베딩 / 벡터 인덱스**: `DocumentChunk.embedding` 사용 안 함. 검색은 키워드 부분일치만.
 > - **벡터 / 의미 기반 retrieval, 최종 RAG retrieval pipeline**.
-> - **Provider 프롬프트 주입 / 최종 RAG 추론**: Step 7 preflight 는 evidence 상태를 세션에 기록만 할 뿐, 후보를 Round 1/2/3 provider 프롬프트에 주입하지 않음. council 답변은 아직 evidence 를 근거로 추론하지 않음.
+> - **검증된 citation 생성 / citation 렌더링 UI**: 스니펫은 후보일 뿐 확정 인용이 아니며, 출력 JSON 스키마는 변경되지 않음.
+> - **답변 본문의 evidence 근거 강제(grounding) / 자동 사실검증**: 컨텍스트는 제공되지만 모델이 이를 반드시 인용하도록 강제하거나 사후 검증하지는 않음.
 
 ## Phase 2 목표
 

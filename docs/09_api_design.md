@@ -165,7 +165,7 @@ Response `200` (요약):
   - `evidenceMode: "ai_only"` → `retrievalStatus: "not_requested"`, 후보 없음 (기본 동작 동일).
   - `internal_docs` (및 `internal_docs_web`) → orchestrator 가 세션 시작 시 **bounded preflight** 로 내부 evidence bundle 을 1회 조회. 결과: `ok` / `no_matches`, DB 미가용·timeout 시 `unavailable`, 기타 오류 시 `failed`. **어떤 경우에도 council 세션은 계속 진행됩니다.**
   - `candidates` 는 최대 5개로 bounded, **snippet 만 포함하고 chunk 전체 본문은 절대 포함하지 않습니다**. `count` 는 전체 매칭 수.
-  - preflight 결과는 아직 **provider 프롬프트에 주입되지 않습니다** (Step 7 범위 밖). 최종 RAG 추론도 미구현.
+  - **Step 8**: `internal_docs` 세션에서는 이 preview 후보가 Round 1/2/3 provider 프롬프트에 **읽기 전용 evidence 컨텍스트**(키워드-스니펫)로 주입됩니다. 단, 이는 검증된 citation 이 아니며 출력 JSON 스키마는 변경되지 않습니다. 의미 기반 RAG / citation 렌더링은 여전히 미구현.
   - 레거시 세션(preflight 이전 생성)은 `null`. recent-list summary 에는 포함되지 않음(목록 비용 보호).
 - `404 not_found` — 세션 없음.
 

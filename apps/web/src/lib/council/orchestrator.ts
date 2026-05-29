@@ -143,6 +143,13 @@ export class CouncilOrchestrator {
       const evidencePreview = await this.runEvidencePreflight(sess);
       await this.store.update(sessionId, { evidencePreview });
 
+      // Read-only evidence context passed into every round's prompt (Step 8).
+      // ai_only stays undefined → prompts are byte-for-byte unchanged. The
+      // preview is computed ONCE here and reused across all three rounds —
+      // retrieval is never re-run per round.
+      const evidenceContext =
+        sess.evidenceMode === "ai_only" ? undefined : evidencePreview;
+
       // Single fixed point of reference for the whole session.
       const sessionDeadline = sess.deadlineAt;
 
@@ -164,6 +171,7 @@ export class CouncilOrchestrator {
         taskType: sess.taskType,
         evidenceMode: sess.evidenceMode,
         domainSafetyPolicySummary: DOMAIN_SAFETY_POLICY_SUMMARY,
+        evidenceContext,
       };
 
       const r1 = await this.runRound<ProviderOpinion>({
@@ -207,6 +215,7 @@ export class CouncilOrchestrator {
           unsafePhrases: o.unsafePhrases.map((p) => p.phrase),
         })),
         knownDangerousPhrases: UNSAFE_PHRASES_KO,
+        evidenceContext,
       };
 
       const r2 = await this.runRound<ProviderCritique>({
@@ -243,6 +252,7 @@ export class CouncilOrchestrator {
           recommendedCorrections: c.recommendedCorrections,
         })),
         knownDangerousPhrases: UNSAFE_PHRASES_KO,
+        evidenceContext,
       };
 
       const finalAns = await this.runSynthesis(

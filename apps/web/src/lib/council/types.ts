@@ -2,6 +2,10 @@
 // These types are intentionally framework-agnostic so they can be reused by
 // orchestrator, provider adapters, API routes, and frontend components.
 
+// Type-only import (erased at runtime) — keeps types.ts free of any runtime
+// dependency. The prompt-safe evidence context reuses the Step 7 preview.
+import type { SessionEvidencePreview } from "./evidencePreview";
+
 export type ProviderId = "gemini" | "anthropic" | "openai";
 
 export type TaskType =
@@ -84,11 +88,17 @@ export type ProviderCallOptions = {
   model?: string;
 };
 
+// Read-only internal-evidence context (Step 8). When present, the prompt
+// builders render a compact Korean evidence block. Undefined for ai_only so
+// that path is byte-for-byte unchanged. Snippets only — never full bodies.
+export type EvidenceContext = SessionEvidencePreview;
+
 export type InitialOpinionInput = {
   userPrompt: string;
   taskType: TaskType;
   evidenceMode: EvidenceMode;
   domainSafetyPolicySummary: string;
+  evidenceContext?: EvidenceContext;
 };
 
 export type CritiqueInput = {
@@ -104,6 +114,7 @@ export type CritiqueInput = {
     unsafePhrases: string[];
   }>;
   knownDangerousPhrases: string[];
+  evidenceContext?: EvidenceContext;
 };
 
 export type SynthesisInput = {
@@ -118,4 +129,5 @@ export type SynthesisInput = {
     recommendedCorrections: string[];
   }>;
   knownDangerousPhrases: string[];
+  evidenceContext?: EvidenceContext;
 };
