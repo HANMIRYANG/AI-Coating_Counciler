@@ -218,4 +218,38 @@ describeIf("DocumentService (integration, PRISMA_INTEGRATION=1)", () => {
     expect(byTypeDocIds.has(katsa.id)).toBe(true);
     expect(byTypeDocIds.has(kcl.id)).toBe(false);
   });
+
+  it("evidence bundle returns internal-document candidates with metadata + snippet", async () => {
+    const doc = await service.create({
+      filename: "evidence-report.md",
+      mimeType: "text/markdown",
+      content:
+        "이 시험성적서는 방오 코팅의 내후성 시험 결과를 KCL 기준으로 정리한 문서입니다.",
+      metadata: {
+        productName: "HE-850A",
+        documentType: "test_report",
+        issuer: "KCL",
+      },
+    });
+    createdIds.push(doc.id);
+
+    const { EvidenceBundleService } = await import("../evidence-bundle");
+    const bundle = await new EvidenceBundleService(service).build({
+      query: "방오 코팅",
+      issuer: "KCL",
+    });
+
+    expect(bundle.retrievalMode).toBe("internal_documents_keyword");
+    expect(bundle.count).toBeGreaterThanOrEqual(1);
+    const candidate = bundle.candidates.find((c) => c.documentId === doc.id);
+    expect(candidate).toBeDefined();
+    expect(candidate?.sourceType).toBe("internal_document");
+    expect(candidate?.trustLevel).toBe("uploaded_copy");
+    expect(candidate?.verificationStatus).toBe("auto_extracted");
+    expect(candidate?.metadata?.issuer).toBe("KCL");
+    expect(typeof candidate?.snippet).toBe("string");
+    expect((candidate?.snippet.length ?? 0)).toBeGreaterThan(0);
+    // Never the full chunk body.
+    expect(candidate).not.toHaveProperty("content");
+  });
 });

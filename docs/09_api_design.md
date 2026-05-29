@@ -21,6 +21,7 @@
 | `POST` | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** text/plain·text/markdown 만 수용, 결정적 chunking 후 Prisma 영속화. PDF/DOCX/이미지 → 415. |
 | `GET`  | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** 문서 summary 목록 (chunk 본문 미포함). |
 | `GET`  | `/api/documents/search?q=...` | `app/api/documents/search/route.ts` | **Phase 2 foundation 한정.** 영속화된 chunk 본문에 대한 결정적 키워드 검색 + metadata 필터. 임베딩/벡터 검색 아님. |
+| `GET`  | `/api/documents/evidence?query=...` | `app/api/documents/evidence/route.ts` | **Phase 2 foundation 한정.** 키워드 검색 결과를 내부문서 evidence 후보로 정규화. orchestrator 미연결. |
 
 > 별도의 `GET /api/council-sessions/:id/final-answer` 엔드포인트는 **없습니다**. 최종 답변은 `GET /api/council-sessions/:id` 응답의 `finalAnswer` 필드로 함께 반환됩니다.
 > Phase 2 후보: `POST /api/council-sessions/:id/providers/:providerId/retry`, `GET /api/council-sessions/:id/events` (SSE) — 둘 다 미구현.
@@ -291,6 +292,47 @@ Response `200`:
 - 결과는 score 내림차순 → `documentId` 오름차순 → `chunkIndex` 오름차순으로 결정적 정렬.
 - chunk 전체 본문은 반환하지 않고 **bounded snippet** (기본 ≤160자, 첫 매치 주변) 만 포함.
 - **미구현**: 임베딩 / 벡터 유사도, evidence bundle 조립, orchestrator 연결. 후보 chunk 는 결정적 순서로 상한(200) 까지만 스캔 후 in-process 정렬.
+
+```http
+GET /api/documents/evidence?query=...&documentType=...&productName=...&issuer=...&limit=N
+```
+
+`GET /api/documents/search` 결과를 **내부문서 evidence 후보**로 정규화합니다 (`lib/documents/evidence-bundle.ts`). 키워드 검색을 내부적으로 호출한 뒤 각 hit 를 council 의 evidence 어휘(`lib/council/evidence.ts`)로 매핑합니다.
+
+- `query` **필수**. 비어있거나 공백뿐이면 `400 invalid_request`. (검색의 `q` 와 동일 의미 — orchestrator-facing 이름)
+- 선택 metadata 필터(`documentType` / `productName` / `issuer`)와 `limit` (기본 10, 최대 50) 은 검색과 동일하게 동작.
+- DB 미구성/미가용 → `503 database_unavailable`.
+
+Response `200`:
+
+```json
+{
+  "query": "방오 코팅",
+  "normalizedQuery": "방오 코팅",
+  "retrievalMode": "internal_documents_keyword",
+  "retrievalStatus": "ok",
+  "count": 1,
+  "candidates": [
+    {
+      "sourceType": "internal_document",
+      "documentId": "...",
+      "filename": "kcl-report.md",
+      "chunkId": "...",
+      "chunkIndex": 0,
+      "snippet": "…방오 코팅의 내후성 시험 결과를 KCL 기준으로…",
+      "metadata": { "productName": "HE-850A", "documentType": "test_report", "issuer": "KCL" },
+      "score": 202,
+      "trustLevel": "uploaded_copy",
+      "verificationStatus": "auto_extracted"
+    }
+  ]
+}
+```
+
+- 각 후보는 내부문서 기본값으로 `trustLevel: "uploaded_copy"` (caveat 동반 시 business-citable) + `verificationStatus: "auto_extracted"` 를 부여받음. 사람이 후속 검토로 승격 가능.
+- `retrievalStatus` 는 후보가 있으면 `ok`, 없으면 `no_matches`.
+- chunk 전체 본문은 포함하지 않고 bounded snippet 만 전달. 정렬 순서는 검색 결과 순서를 그대로 보존.
+- **미구현**: 임베딩 / 벡터 유사도, 최종 RAG retrieval, evidence bundle → orchestrator 핸드오프.
 
 ---
 
