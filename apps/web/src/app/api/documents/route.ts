@@ -14,11 +14,11 @@
 //   a typed message so the caller knows to configure DATABASE_URL +
 //   migrations rather than retrying blindly.
 //
-// Scope reminder (Step 3 foundation):
+// Scope reminder (Step 3/4 foundation):
 //   No embeddings, no retrieval, no orchestrator wiring. Rich metadata
-//   (issuer / testMethod / etc.) is accepted and validated at the API
-//   boundary but is NOT yet persisted; a follow-up migration will add
-//   a metadata column on `Document`.
+//   (issuer / testMethod / etc.) is validated at the API boundary and
+//   persisted into `Document.metadata`; it is surfaced in the GET summary
+//   but is not yet used for retrieval.
 
 import { NextResponse } from "next/server";
 

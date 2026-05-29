@@ -1,13 +1,11 @@
 // Prisma-backed DocumentService.
 //
-// Step 3 is a foundation slice:
+// Foundation slice (Step 3 + Step 4):
 //   - Persists the `Document` row + `DocumentChunk` rows. `embedding`
 //     stays null. No retrieval / no orchestrator wiring.
 //   - The validated rich metadata block (issuer / testMethod / etc.) is
-//     NOT persisted in this slice — the existing Prisma `Document` model
-//     has no metadata column. A follow-up migration will add one. Until
-//     then the API accepts and validates the field so callers can be
-//     written against the stable shape.
+//     now persisted into `Document.metadata` (Step 4). PDF/DOCX parsing,
+//     embeddings, retrieval, and orchestrator wiring remain unimplemented.
 //
 // Error surface:
 //   `DocumentServiceError` with a typed `code`. The API route translates
@@ -15,11 +13,11 @@
 //   a silent in-memory fallback (Step 3 documents only make sense when
 //   actually persisted).
 
-import type { PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 
 import { getPrismaClient } from "../db";
 import { chunkText, type Chunk } from "./chunker";
-import type { CreateDocumentRequest } from "./schemas";
+import type { CreateDocumentRequest, DocumentMetadata } from "./schemas";
 
 export type DocumentServiceErrorCode =
   | "database_unavailable"
@@ -44,6 +42,7 @@ export type DocumentSummary = {
   category: string | null;
   version: string | null;
   status: string;
+  metadata: DocumentMetadata | null;
   chunkCount: number;
   createdAt: number;
 };
@@ -116,13 +115,20 @@ export class DocumentService {
           category: input.category ?? null,
           version: input.version ?? null,
           status: "chunked",
+          // `input.metadata` is already validated + key-stripped by
+          // `DocumentMetadataSchema`; persist it verbatim. When the caller
+          // omits it, write SQL NULL (`Prisma.DbNull`) — not a JSON `null`
+          // literal — so the nullable JSONB column stays truly empty.
+          metadata: input.metadata
+            ? (input.metadata as Prisma.InputJsonValue)
+            : Prisma.DbNull,
           chunks: {
             create: chunks.map((c) => ({
               chunkIndex: c.index,
               content: c.content,
               pageNumber: c.pageNumber ?? null,
-              // metadata + embedding intentionally left null until a
-              // follow-up migration adds richer storage.
+              // per-chunk metadata + embedding intentionally left null —
+              // populated when embeddings / retrieval ship.
             })),
           },
         },
@@ -149,6 +155,7 @@ export class DocumentService {
           category: true,
           version: true,
           status: true,
+          metadata: true,
           createdAt: true,
           _count: { select: { chunks: true } },
         },
@@ -162,6 +169,9 @@ export class DocumentService {
         category: r.category,
         version: r.version,
         status: r.status,
+        // Stored verbatim from the validated intake block; null when the
+        // document was created without metadata.
+        metadata: (r.metadata as DocumentMetadata | null) ?? null,
         chunkCount: r._count.chunks,
         createdAt: r.createdAt.getTime(),
       }));

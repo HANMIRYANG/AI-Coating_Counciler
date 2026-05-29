@@ -73,6 +73,65 @@ describeIf("DocumentService (integration, PRISMA_INTEGRATION=1)", () => {
     expect(doc?._count.chunks).toBe(chunkCount);
   });
 
+  it("create persists validated metadata and list reads it back", async () => {
+    const { id } = await service.create({
+      filename: "report.md",
+      mimeType: "text/markdown",
+      content: "# 시험성적서\n\nKS F 2271 결과 요약.",
+      metadata: {
+        productName: "HE-850A",
+        documentType: "test_report",
+        issuer: "KCL",
+        testMethod: "KS F 2271",
+        substrate: "강판",
+        coatingThickness: "120 μm",
+      },
+    });
+    createdIds.push(id);
+
+    // Read back through the raw client to confirm the column is populated.
+    const { getPrismaClient } = await import("../../db");
+    const client = getPrismaClient();
+    const doc = await client.document.findUnique({
+      where: { id },
+      select: { metadata: true },
+    });
+    expect(doc?.metadata).toEqual({
+      productName: "HE-850A",
+      documentType: "test_report",
+      issuer: "KCL",
+      testMethod: "KS F 2271",
+      substrate: "강판",
+      coatingThickness: "120 μm",
+    });
+
+    // And surfaced through the service list summary.
+    const rows = await service.list(50);
+    const row = rows.find((r) => r.id === id);
+    expect(row?.metadata).toEqual({
+      productName: "HE-850A",
+      documentType: "test_report",
+      issuer: "KCL",
+      testMethod: "KS F 2271",
+      substrate: "강판",
+      coatingThickness: "120 μm",
+    });
+  });
+
+  it("create without metadata stores null and list reports null", async () => {
+    const { id } = await service.create({
+      filename: "plain.txt",
+      mimeType: "text/plain",
+      content: "메타데이터 없는 문서 본문.",
+    });
+    createdIds.push(id);
+
+    const rows = await service.list(50);
+    const row = rows.find((r) => r.id === id);
+    expect(row).toBeDefined();
+    expect(row?.metadata).toBeNull();
+  });
+
   it("list returns newest-first summaries without chunk content", async () => {
     const a = await service.create({
       filename: "a.txt",

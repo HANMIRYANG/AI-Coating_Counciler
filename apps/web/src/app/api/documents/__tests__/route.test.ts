@@ -143,6 +143,31 @@ describe("POST /api/documents", () => {
     expect(callArg.filename).toBe("memo.txt");
     expect(callArg.mimeType).toBe("text/plain");
   });
+
+  it("forwards validated metadata (unknown keys stripped) to the service", async () => {
+    createMock.mockResolvedValueOnce({ id: "doc_meta", chunkCount: 1 });
+    const req = jsonRequest({
+      filename: "report.md",
+      mimeType: "text/markdown",
+      content: "# 시험성적서\n\n결과.",
+      metadata: {
+        productName: "HE-850A",
+        issuer: "KCL",
+        testMethod: "KS F 2271",
+        legacyField: "dropped",
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(createMock).toHaveBeenCalledTimes(1);
+    const callArg = createMock.mock.calls[0][0];
+    expect(callArg.metadata).toEqual({
+      productName: "HE-850A",
+      issuer: "KCL",
+      testMethod: "KS F 2271",
+    });
+    expect(callArg.metadata).not.toHaveProperty("legacyField");
+  });
 });
 
 describe("GET /api/documents", () => {
@@ -175,6 +200,11 @@ describe("GET /api/documents", () => {
         category: null,
         version: null,
         status: "chunked",
+        metadata: {
+          productName: "HE-850A",
+          issuer: "KCL",
+          testMethod: "KS F 2271",
+        },
         chunkCount: 1,
         createdAt: 1_700_000_000_000,
       },
@@ -185,7 +215,13 @@ describe("GET /api/documents", () => {
     );
     expect(res.status).toBe(200);
     const body = await res.json();
+    // metadata is surfaced verbatim in the summary; chunk content is not.
     expect(body).toEqual({ documents: summaries });
+    expect(body.documents[0].metadata).toEqual({
+      productName: "HE-850A",
+      issuer: "KCL",
+      testMethod: "KS F 2271",
+    });
     expect(listMock).toHaveBeenCalledWith(10);
   });
 });

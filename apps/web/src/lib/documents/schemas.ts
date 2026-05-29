@@ -5,9 +5,9 @@
 // explicitly out of scope and rejected at the API boundary with a 415.
 //
 // The rich `DocumentMetadata` block (issuer, testMethod, etc.) is validated
-// here but is NOT yet persisted — the existing Prisma `Document` model has
-// no metadata column. A follow-up migration will add one; until then the
-// schema is published so callers can be written against a stable contract.
+// here: unknown keys are stripped, and the validated object is persisted to
+// `Document.metadata` (JSONB) and surfaced in `GET /api/documents`. Retrieval
+// does not consume it yet — it is stored foundation, not wired into RAG.
 
 import { z } from "zod";
 import { EvidenceDocumentTypeSchema } from "@/lib/council/evidence";

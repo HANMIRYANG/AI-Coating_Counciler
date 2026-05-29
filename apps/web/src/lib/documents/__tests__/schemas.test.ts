@@ -131,6 +131,38 @@ describe("documents/schemas", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("CreateDocumentRequest preserves validated metadata and strips unknown keys", () => {
+    // Proves metadata survives schema validation intact (the values the
+    // service persists) while unknown keys are dropped before they could
+    // reach the metadata column.
+    const parsed = CreateDocumentRequestSchema.safeParse({
+      filename: "report.md",
+      mimeType: "text/markdown",
+      content: "# 시험성적서\n\n결과.",
+      metadata: {
+        productName: "HE-850A",
+        documentType: "test_report",
+        issuer: "KCL",
+        testMethod: "KS F 2271",
+        substrate: "강판",
+        coatingThickness: "120 μm",
+        legacyField: "should be dropped",
+      },
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.metadata).toEqual({
+        productName: "HE-850A",
+        documentType: "test_report",
+        issuer: "KCL",
+        testMethod: "KS F 2271",
+        substrate: "강판",
+        coatingThickness: "120 μm",
+      });
+      expect(parsed.data.metadata).not.toHaveProperty("legacyField");
+    }
+  });
+
   it("DocumentMetadata ignores extra unknown fields", () => {
     // By default Zod strips unknown keys; we rely on that so a caller
     // including an old field doesn't break.

@@ -219,7 +219,7 @@ Request:
 - Zod 검증 실패 → `400 invalid_request` + `details` (flatten).
 - DB 미구성/미가용 → `503 database_unavailable` (메모리 fallback 없음 — Step 3 의 의도된 동작).
 - 성공 → `201 { id, chunkCount, status: "chunked" }`.
-- **metadata 객체는 현재 검증만 되고 영속화되지 않습니다** (`Document` 모델에 metadata 컬럼 없음). 후속 마이그레이션에서 추가 예정.
+- **metadata 객체는 검증 후 `Document.metadata` (JSONB) 에 영속화됩니다.** unknown 키는 Zod 가 저장 전에 제거하며, `GET /api/documents` summary 에 그대로 노출됩니다. retrieval 에는 아직 사용되지 않습니다.
 
 ```http
 GET /api/documents?limit=N
@@ -239,6 +239,12 @@ Response `200`:
       "category": null,
       "version": null,
       "status": "chunked",
+      "metadata": {
+        "productName": "HE-850A",
+        "documentType": "test_report",
+        "issuer": "KCL",
+        "testMethod": "KS F 2271"
+      },
       "chunkCount": 3,
       "createdAt": 1748400000000
     }
@@ -247,6 +253,7 @@ Response `200`:
 ```
 
 - `limit` 기본 20, 최대 100 (그 이상은 clamp).
+- `metadata` 는 intake 시 저장된 값 그대로; metadata 없이 생성된 문서는 `null`.
 - chunk 본문은 절대 포함되지 않음. 단일 문서의 chunk 본문은 Phase 2 retrieval 에서 별도 엔드포인트로 노출 예정.
 
 ---

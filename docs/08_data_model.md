@@ -146,6 +146,12 @@ model ProviderAttemptLog {
 `DocumentChunk` 는 기존과 동일한 의도로 유지됩니다. 전체 정의는
 `apps/web/prisma/schema.prisma` 를 보세요.
 
+`Document.metadata` (JSONB) 는 intake 시 검증된 metadata 블록(issuer /
+testMethod / substrate 등)을 영속화합니다. unknown 키는 `DocumentMetadataSchema`
+가 저장 전에 제거하며, 현재는 `GET /api/documents` summary 에만 노출되고
+retrieval 에는 사용되지 않습니다. `DocumentChunk.embedding` 은 여전히 미사용
+(null) 입니다.
+
 ---
 
 ## ProviderCallLog vs ProviderAttemptLog

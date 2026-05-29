@@ -270,6 +270,11 @@ model Document {
   category     String?
   version      String?
   status       String   @default("uploaded")
+  // Validated intake metadata (issuer / testMethod / substrate / etc.),
+  // shaped by `DocumentMetadataSchema`. Persisted at intake; not yet used
+  // for retrieval. Unknown keys are stripped by the Zod schema before this
+  // column is written.
+  metadata     Json?
   createdAt    DateTime @default(now())
 
   chunks DocumentChunk[]

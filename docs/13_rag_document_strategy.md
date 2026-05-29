@@ -1,19 +1,19 @@
 # 13. RAG Document Strategy
 
-> **현재 구현 상태 (2026-05-29, Step 3 foundation)**
+> **현재 구현 상태 (2026-05-29, Step 3/4 foundation)**
 >
 > 구현됨:
 > - **텍스트 전용 intake**: `POST /api/documents` 가 `text/plain` 과 `text/markdown` 만 수용. PDF/DOCX/이미지/기타 바이너리는 `415` 로 거부.
 > - **결정적 chunking** (`lib/documents/chunker.ts`): 단락 분리 → 긴 단락은 문장 packing → 미세 tail merge. 순수 함수, `chunkIndex` 0..N-1 부여.
 > - **Prisma 영속화** (`lib/documents/service.ts`): 기존 `Document` / `DocumentChunk` 모델 사용. `embedding` 컬럼은 항상 null. DB 미가용 시 메모리로 silent fallback 하지 않고 `503 database_unavailable` 응답.
 > - **타입화된 메타데이터 스키마** (`lib/documents/schemas.ts`): issuer / testMethod / substrate / coatingThickness 등 검증.
+> - **메타데이터 영속화 (Step 4)**: 검증된 metadata 블록을 `Document.metadata` (JSONB) 컬럼에 그대로 저장하고 `GET /api/documents` summary 에 노출. unknown 키는 Zod 가 저장 전에 제거. retrieval 에는 아직 사용하지 않음.
 >
-> 미구현 (Step 3 범위 밖):
+> 미구현 (범위 밖):
 > - **PDF / DOCX 파서**: 모두 415 로 거부됨.
 > - **임베딩 / 벡터 인덱스**: `DocumentChunk.embedding` 사용 안 함.
 > - **검색 / RAG retrieval pipeline**.
 > - **Orchestrator 와의 연결**: `evidenceMode` 가 `internal_docs` 라도 현재는 ai_only 와 동일하게 동작. 문서 intake 와 council session 은 아직 무관.
-> - **메타데이터 영속화**: 스키마는 검증되지만 `Document` 모델에 metadata 컬럼이 없어 저장은 보류. 후속 마이그레이션에서 추가 예정.
 
 ## Phase 2 목표
 
