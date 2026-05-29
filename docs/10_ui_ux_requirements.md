@@ -98,6 +98,22 @@ Round 3 최종 합의안
 
 ## Final Answer Panel
 
+## 세션 내부 문서 근거 검색 패널 (Step 9)
+
+`evidenceMode`가 `internal_docs`인 세션에서는 AI 회의 결과와 최종 답변 사이에 **내부 문서 근거 검색 패널**(`EvidencePreviewPanel`)을 표시합니다. UI/상태 투명성 전용이며, 최종 답변의 citation 렌더링은 아직 구현하지 않습니다.
+
+```text
+- retrievalStatus: ok → 검색된 문서 후보 목록 (filename #chunkIndex, 메타데이터 요약, 신뢰수준, 검증상태, bounded snippet)
+- no_matches       → "검색 결과 없음" + 누락 근거 안내
+- unavailable/failed → 경고 톤 + 사유(errorMessage) 표시, 세션은 계속 진행
+- not_requested / ai_only → 패널 비표시 (조용한 UI 유지)
+```
+
+- chunk 전체 본문은 표시하지 않고 `evidencePreview`에 이미 포함된 bounded snippet 만 노출합니다.
+- 키워드 검색 기반 후보임을 명시하며, 검증된 최종 인용이 아님을 항상 표기합니다.
+
+---
+
 최종 답변은 두 가지 모드로 보여줍니다.
 
 ### 업체 발송용

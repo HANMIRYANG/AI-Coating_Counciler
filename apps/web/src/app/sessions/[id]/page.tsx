@@ -8,6 +8,7 @@ import type {
   ProviderCritique,
   ProviderOpinion,
 } from "@/lib/council/schemas";
+import type { SessionEvidencePreview } from "@/lib/council/evidencePreview";
 
 type SessionApiResponse = {
   id: string;
@@ -49,6 +50,7 @@ type SessionApiResponse = {
   opinions: ProviderOpinion[];
   critiques: ProviderCritique[];
   finalAnswer: FinalAnswer | null;
+  evidencePreview: SessionEvidencePreview | null;
 };
 
 const TERMINAL_STATES: SessionStatus[] = [

@@ -22,6 +22,8 @@ import { useRecentSessions } from "@/lib/ui/useRecentSessions";
 import type { SessionSummary } from "@/lib/council/store";
 import { EvidencePanel } from "@/components/council/EvidencePanel";
 import { RiskPhrasePanel } from "@/components/council/RiskPhrasePanel";
+import { EvidencePreviewPanel } from "@/components/council/EvidencePreviewPanel";
+import type { SessionEvidencePreview } from "@/lib/council/evidencePreview";
 
 export type ProviderCallView = {
   providerId: ProviderId;
@@ -610,6 +612,7 @@ export function SessionWorkspace({
     critiques: ProviderCritique[];
     finalAnswer: FinalAnswer | null;
     errorMessage: string | null;
+    evidencePreview?: SessionEvidencePreview | null;
   } | null;
   error: string | null;
 }) {
@@ -687,6 +690,8 @@ export function SessionWorkspace({
                   {data.critiques.length > 0 && (
                     <SynthCard critiques={data.critiques} />
                   )}
+
+                  <EvidencePreviewPanel preview={data.evidencePreview} />
 
                   {data.finalAnswer && <VerifyCard answer={data.finalAnswer} />}
 
