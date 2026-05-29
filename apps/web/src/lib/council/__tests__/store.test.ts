@@ -142,6 +142,7 @@ describe("MemorySessionStore.listRecent", () => {
       "opinions",
       "critiques",
       "finalAnswer",
+      "evidencePreview",
       "rawResponse",
       "parsedResponse",
       "deadlineAt",

@@ -61,6 +61,16 @@ import {
   type RateLimitedError,
 } from "./rateLimiter";
 import { JsonParseError, SchemaValidationError } from "./prompts";
+import { EvidenceBundleService } from "@/lib/documents/evidence-bundle";
+import { DocumentServiceError } from "@/lib/documents/service";
+import {
+  evidencePreviewTimeoutMs,
+  failedPreview,
+  notRequestedPreview,
+  previewFromBundle,
+  unavailablePreview,
+  type SessionEvidencePreview,
+} from "./evidencePreview";
 
 export type TimingConfig = {
   providerTimeoutMs: number;
@@ -107,6 +117,11 @@ export class CouncilOrchestrator {
     private readonly providers: ProviderRegistry,
     private readonly cfg: TimingConfig = defaultTimingConfig(),
     private readonly store = getSessionStore(),
+    // Optional injection point for the evidence preflight. Left undefined in
+    // production: it is lazily constructed only when a non-ai_only session
+    // actually needs it, so the ai_only path never touches the documents /
+    // Prisma layer. Tests pass a stub to avoid a real database.
+    private readonly evidenceService?: EvidenceBundleService,
   ) {}
 
   /**
@@ -119,6 +134,14 @@ export class CouncilOrchestrator {
       await this.transition(sessionId, "preparing");
       const sess = await this.store.get(sessionId);
       if (!sess) return;
+
+      // Internal evidence retrieval preflight (Step 7). Bounded + timeout-
+      // safe. For ai_only it is a no-op (`not_requested`); otherwise it runs
+      // the internal evidence bundle once and records status. It NEVER
+      // fails the session — any error is captured in the preview and the
+      // council proceeds. Candidates are NOT yet injected into prompts.
+      const evidencePreview = await this.runEvidencePreflight(sess);
+      await this.store.update(sessionId, { evidencePreview });
 
       // Single fixed point of reference for the whole session.
       const sessionDeadline = sess.deadlineAt;
@@ -912,6 +935,47 @@ export class CouncilOrchestrator {
       currentRound,
       ...extra,
     });
+  }
+
+  /**
+   * Bounded, timeout-safe internal evidence retrieval preflight.
+   *
+   * Returns a `SessionEvidencePreview` describing what (if anything) was
+   * retrieved. NEVER throws and NEVER fails the session — on timeout /
+   * database-unavailable / any error it returns an `unavailable` / `failed`
+   * preview and the council run continues unchanged. The retrieved
+   * candidates are NOT injected into provider prompts in this step.
+   */
+  private async runEvidencePreflight(
+    sess: SessionRecord,
+  ): Promise<SessionEvidencePreview> {
+    // ai_only: never touch the documents layer — default behavior preserved
+    // exactly (no DB access, no Prisma load).
+    if (sess.evidenceMode === "ai_only") {
+      return notRequestedPreview(sess.evidenceMode);
+    }
+
+    // Lazily construct the service so the ai_only path above never does.
+    const evidence = this.evidenceService ?? new EvidenceBundleService();
+    try {
+      const bundle = await withTimeout(() => evidence.build({ query: sess.userPrompt }), {
+        timeoutMs: evidencePreviewTimeoutMs(),
+        label: "evidence-preflight",
+      });
+      return previewFromBundle(sess.evidenceMode, bundle);
+    } catch (err) {
+      if (err instanceof TimeoutError) {
+        return unavailablePreview(sess.evidenceMode, err.message);
+      }
+      if (
+        err instanceof DocumentServiceError &&
+        err.code === "database_unavailable"
+      ) {
+        return unavailablePreview(sess.evidenceMode, err.message);
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      return failedPreview(sess.evidenceMode, message);
+    }
   }
 }
 

@@ -85,6 +85,10 @@ export async function GET(
     opinions: sess.opinions,
     critiques: sess.critiques,
     finalAnswer: sess.finalAnswer ?? null,
+    // Bounded internal-evidence retrieval preview (Step 7). Snippets only —
+    // never full chunk bodies. `null` for legacy sessions created before the
+    // preflight ran.
+    evidencePreview: sess.evidencePreview ?? null,
     debug,
   };
 

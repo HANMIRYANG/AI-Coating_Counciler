@@ -56,6 +56,7 @@ import {
   type SessionStore,
   type SessionSummary,
 } from "./store";
+import type { SessionEvidencePreview } from "./evidencePreview";
 
 function dateToMs(d: Date | null | undefined): number | undefined {
   return d ? d.getTime() : undefined;
@@ -108,6 +109,8 @@ function reassemble(row: SessionWithRelations): SessionRecord {
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
       .map((r) => r.parsedResponse as ProviderCritique),
     finalAnswer: final ? finalAnswerFromRow(final) : undefined,
+    evidencePreview:
+      (row.evidencePreview as SessionEvidencePreview | null) ?? undefined,
   };
 }
 
@@ -202,6 +205,10 @@ export class PrismaSessionStore implements SessionStore {
         completedAt: msToDate(s.completedAt) ?? null,
         deadlineAt: new Date(s.deadlineAt),
         errorMessage: s.errorMessage ?? null,
+        evidencePreview:
+          s.evidencePreview === undefined
+            ? Prisma.DbNull
+            : (s.evidencePreview as unknown as Prisma.InputJsonValue),
       },
     });
   }
@@ -228,6 +235,9 @@ export class PrismaSessionStore implements SessionStore {
       data.startedAt = msToDate(patch.startedAt) ?? null;
     if (patch.errorMessage !== undefined)
       data.errorMessage = patch.errorMessage ?? null;
+    if (patch.evidencePreview !== undefined)
+      data.evidencePreview =
+        patch.evidencePreview as unknown as Prisma.InputJsonValue;
 
     // FinalAnswer is stored in its own table — create a new revision row.
     if (patch.finalAnswer) {

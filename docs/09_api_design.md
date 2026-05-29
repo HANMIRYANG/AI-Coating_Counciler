@@ -15,7 +15,7 @@
 |---|---|---|---|
 | `POST` | `/api/council-sessions` | `app/api/council-sessions/route.ts` | 세션 생성 + 백그라운드 오케스트레이션 시작 |
 | `GET`  | `/api/council-sessions?limit=N` | `app/api/council-sessions/route.ts` | 최근 세션 summary 목록 (newest first) |
-| `GET`  | `/api/council-sessions/:id` | `app/api/council-sessions/[id]/route.ts` | 세션 스냅샷 (의견·비판·**최종 답변 포함**). `?debug=1` 옵션. |
+| `GET`  | `/api/council-sessions/:id` | `app/api/council-sessions/[id]/route.ts` | 세션 스냅샷 (의견·비판·**최종 답변** + **evidence preview** 포함). `?debug=1` 옵션. |
 | `POST` | `/api/council-sessions/:id/start` | `app/api/council-sessions/[id]/start/route.ts` | idempotent 명시적 시작 (이미 시작했으면 no-op) |
 | `GET`  | `/api/evidence-sources` | `app/api/evidence-sources/route.ts` | 카탈로그/정책 메타데이터. 현재 `retrievalEnabled=false`. |
 | `POST` | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** text/plain·text/markdown 만 수용, 결정적 chunking 후 Prisma 영속화. PDF/DOCX/이미지 → 415. |
@@ -138,11 +138,35 @@ Response `200` (요약):
   "opinions": [ "...ProviderOpinion[]..." ],
   "critiques": [ "...ProviderCritique[]..." ],
   "finalAnswer": null,
+  "evidencePreview": {
+    "mode": "internal_docs",
+    "retrievalStatus": "ok",
+    "count": 3,
+    "candidates": [
+      {
+        "documentId": "...",
+        "filename": "kcl-report.md",
+        "chunkId": "...",
+        "chunkIndex": 0,
+        "snippet": "…방오 코팅의 부착 성능…",
+        "metadata": { "issuer": "KCL", "documentType": "test_report" },
+        "score": 202,
+        "trustLevel": "uploaded_copy",
+        "verificationStatus": "auto_extracted"
+      }
+    ]
+  },
   "debug": false
 }
 ```
 
 - `finalAnswer` 는 합성 라운드가 끝나면 `FinalAnswer` (Zod schema 참고) 객체로 채워집니다.
+- `evidencePreview` 는 **세션 단위 내부문서 evidence 검색 preview (Step 7)** 입니다.
+  - `evidenceMode: "ai_only"` → `retrievalStatus: "not_requested"`, 후보 없음 (기본 동작 동일).
+  - `internal_docs` (및 `internal_docs_web`) → orchestrator 가 세션 시작 시 **bounded preflight** 로 내부 evidence bundle 을 1회 조회. 결과: `ok` / `no_matches`, DB 미가용·timeout 시 `unavailable`, 기타 오류 시 `failed`. **어떤 경우에도 council 세션은 계속 진행됩니다.**
+  - `candidates` 는 최대 5개로 bounded, **snippet 만 포함하고 chunk 전체 본문은 절대 포함하지 않습니다**. `count` 는 전체 매칭 수.
+  - preflight 결과는 아직 **provider 프롬프트에 주입되지 않습니다** (Step 7 범위 밖). 최종 RAG 추론도 미구현.
+  - 레거시 세션(preflight 이전 생성)은 `null`. recent-list summary 에는 포함되지 않음(목록 비용 보호).
 - `404 not_found` — 세션 없음.
 
 `?debug=1` 추가 페이로드:

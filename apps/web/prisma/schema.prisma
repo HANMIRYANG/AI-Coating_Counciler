@@ -50,6 +50,11 @@ model CouncilSession {
   riskLevel        String?
   confidenceScore  Float?
 
+  // Bounded internal-evidence retrieval preview (Step 7). Set by the
+  // orchestrator preflight; snippets only, never full chunk bodies. Null
+  // for ai_only-era sessions created before the preflight populated it.
+  evidencePreview  Json?
+
   // timing
   createdAt        DateTime @default(now())
   startedAt        DateTime?

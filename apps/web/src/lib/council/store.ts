@@ -14,6 +14,7 @@ import type {
   EvidenceMode,
 } from "./types";
 import type { ProviderOpinion, ProviderCritique, FinalAnswer } from "./schemas";
+import type { SessionEvidencePreview } from "./evidencePreview";
 
 /**
  * Per-attempt log entry — one row per *try*, including limiter-internal
@@ -93,6 +94,13 @@ export type SessionRecord = {
   opinions: ProviderOpinion[];
   critiques: ProviderCritique[];
   finalAnswer?: FinalAnswer;
+  /**
+   * Bounded internal-evidence retrieval preview (Step 7). Set once by the
+   * orchestrator preflight. `not_requested` for ai_only. Exposed in the
+   * single-session snapshot, NOT in the recent-list summary. Carries
+   * snippets only — never full chunk bodies.
+   */
+  evidencePreview?: SessionEvidencePreview;
 };
 
 /**
