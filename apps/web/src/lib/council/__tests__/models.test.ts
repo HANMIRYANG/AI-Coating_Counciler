@@ -213,7 +213,7 @@ describe("resolveModelChain", () => {
   it("legacy OPENAI_MODEL primary override does NOT poison high_accuracy head", () => {
     process.env.ANTHROPIC_MODEL = "claude-test-override";
     const chain = resolveModelChain("anthropic", "high_accuracy");
-    // High-accuracy head must remain claude-opus-4-7, not the legacy primary.
+    // High-accuracy head must remain claude-opus-4-8, not the legacy primary.
     expect(chain[0]).toBe(DEFAULT_MODELS.anthropic.highAccuracy);
     // The override appears later in the chain (as primary), not first.
     expect(chain).toContain("claude-test-override");

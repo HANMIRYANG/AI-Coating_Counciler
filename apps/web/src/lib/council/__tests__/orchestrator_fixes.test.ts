@@ -370,7 +370,7 @@ describe("High-accuracy chain regression", () => {
     await o.run(sess.id);
 
     // First model handed to the Anthropic adapter must be the high-accuracy
-    // head (claude-opus-4-7), NOT the legacy primary override.
+    // head (claude-opus-4-8), NOT the legacy primary override.
     expect(reg.anthropic.callsByRound.initial[0]?.model).toBe(
       DEFAULT_MODELS.anthropic.highAccuracy,
     );

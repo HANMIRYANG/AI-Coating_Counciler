@@ -53,7 +53,7 @@ export const DEFAULT_MODELS: Record<ProviderId, ModelChain> = {
   anthropic: {
     primary: "claude-sonnet-4-6",
     fastFallback: "claude-haiku-4-5",
-    highAccuracy: "claude-opus-4-7",
+    highAccuracy: "claude-opus-4-8",
   },
   gemini: {
     primary: "gemini-3.5-flash",
