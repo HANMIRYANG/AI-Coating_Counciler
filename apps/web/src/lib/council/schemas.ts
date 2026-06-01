@@ -118,6 +118,11 @@ export const CoveredClaimSchema = z.object({
 export type CoveredClaim = z.infer<typeof CoveredClaimSchema>;
 
 export const FinalAnswerSchema = z.object({
+  // Discriminator for the synthesis output union. Standard technical-review
+  // style answers are tagged "standard"; ideation-mode answers use the
+  // separate IdeationFinalAnswerSchema tagged "ideation". Defaulted so that
+  // existing producers/fixtures that omit it remain valid.
+  answerKind: z.literal("standard").default("standard"),
   conclusion: z.string().min(1),
   finalMarkdown: z.string().min(1),
   businessReadyAnswer: z.string().min(1),
@@ -150,6 +155,70 @@ export const FinalAnswerSchema = z.object({
   evidenceCoverageStatus: EvidenceCoverageStatusSchema.default("not_requested"),
 });
 export type FinalAnswer = z.infer<typeof FinalAnswerSchema>;
+
+// ── Ideation mode output (docs/23) ────────────────────────────────────
+// taskType=application_ideas produces a DISTINCT synthesis shape: a list of
+// pre-validation idea options rather than a single business-ready answer.
+//
+// Per docs/12 + CLAUDE.md non-negotiable #5, the ideation answer MUST still
+// carry the shared domain-safety surface (unsafePhrases / recommendedSafeWording
+// / missingEvidence / riskLevel) so `applySafetyGuard` can run and the risk /
+// missing-evidence panels stay populated. Ideas are hypotheses only — each
+// idea additionally records `doNotClaim` to keep unverified performance /
+// certification claims out of any downstream copy.
+
+export const IdeationItemSchema = z.object({
+  ideaSummary: z.string().min(1),
+  targetApplication: z.string().default(""),
+  expectedBenefit: z.string().default(""),
+  requiredEvidence: z.array(z.string()).default([]),
+  riskLevel: RiskLevelSchema.default("medium"),
+  recommendedNextExperiment: z.string().default(""),
+  doNotClaim: z.array(z.string()).default([]),
+});
+export type IdeationItem = z.infer<typeof IdeationItemSchema>;
+
+export const IdeationFinalAnswerSchema = z.object({
+  answerKind: z.literal("ideation").default("ideation"),
+  // docs/23 core ideation fields.
+  ideas: z.array(IdeationItemSchema).default([]),
+  unresolvedQuestions: z.array(z.string()).default([]),
+  followUpResearch: z.array(z.string()).default([]),
+  // Rendering + disclaimer carrier. `finalMarkdown` is where the safety guard
+  // appends the mandatory disclaimer, mirroring FinalAnswer.
+  conclusion: z.string().default(""),
+  finalMarkdown: z.string().default(""),
+  // Shared domain-safety surface (CLAUDE.md non-negotiable #5).
+  missingEvidence: z.array(z.string()).default([]),
+  unsafePhrases: z.array(UnsafePhraseItemSchema).default([]),
+  recommendedSafeWording: z.array(z.string()).default([]),
+  riskLevel: RiskLevelSchema.default("medium"),
+  confidenceScore: z.number().min(0).max(1).default(0.5),
+  // Provider/session bookkeeping — kept parallel to FinalAnswer so the store,
+  // API serializer and markdown export can treat both shapes uniformly.
+  providerSummary: z
+    .array(
+      z.object({
+        providerId: ProviderIdSchema,
+        status: z.string(),
+        latencyMs: z.number().int().nonnegative().optional(),
+      }),
+    )
+    .default([]),
+  sessionStatus: z.string().optional(),
+  // Step 10 evidence usage parity (populated deterministically by orchestrator).
+  evidenceUsed: z.array(EvidenceUsedRefSchema).default([]),
+  coveredClaims: z.array(CoveredClaimSchema).default([]),
+  uncoveredClaims: z.array(z.string()).default([]),
+  evidenceCoverageStatus: EvidenceCoverageStatusSchema.default("not_requested"),
+});
+export type IdeationFinalAnswer = z.infer<typeof IdeationFinalAnswerSchema>;
+
+// Discriminated (by `answerKind`) union of the two synthesis output shapes.
+// Branch at runtime with `result.answerKind === "ideation"`. Each provider
+// parses with the concrete schema for its taskType, so this stays a TS-level
+// union (avoids ZodDefault-on-discriminator pitfalls of z.discriminatedUnion).
+export type SynthesisResult = FinalAnswer | IdeationFinalAnswer;
 
 export const CreateSessionRequestSchema = z.object({
   prompt: z.string().min(1).max(8000),

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   CreateSessionRequestSchema,
   FinalAnswerSchema,
+  IdeationFinalAnswerSchema,
   ProviderOpinionSchema,
 } from "../schemas";
 
@@ -76,6 +77,40 @@ describe("Zod schema validation", () => {
       finalMarkdown: "본문",
       businessReadyAnswer: "발송용",
       evidenceCoverageStatus: "totally_sufficient",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("FinalAnswerSchema defaults answerKind to 'standard'", () => {
+    const r = FinalAnswerSchema.safeParse({
+      conclusion: "결론",
+      finalMarkdown: "본문",
+      businessReadyAnswer: "발송용",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.answerKind).toBe("standard");
+  });
+
+  it("IdeationFinalAnswerSchema parses minimal input with defaults + answerKind", () => {
+    const r = IdeationFinalAnswerSchema.safeParse({
+      ideas: [{ ideaSummary: "방열 코팅을 배터리 모듈 간 절연 보조에 적용 검토" }],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.answerKind).toBe("ideation");
+      expect(r.data.ideas[0].riskLevel).toBe("medium");
+      expect(r.data.ideas[0].doNotClaim).toEqual([]);
+      // Shared safety surface defaults present.
+      expect(r.data.unsafePhrases).toEqual([]);
+      expect(r.data.recommendedSafeWording).toEqual([]);
+      expect(r.data.missingEvidence).toEqual([]);
+      expect(r.data.evidenceCoverageStatus).toBe("not_requested");
+    }
+  });
+
+  it("IdeationItem requires a non-empty ideaSummary", () => {
+    const r = IdeationFinalAnswerSchema.safeParse({
+      ideas: [{ ideaSummary: "" }],
     });
     expect(r.success).toBe(false);
   });

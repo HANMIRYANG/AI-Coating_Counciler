@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 import { SessionWorkspace } from "@/components/design/CouncilDesign";
 import type { ProviderId, SessionStatus } from "@/lib/council/types";
 import type {
-  FinalAnswer,
   ProviderCritique,
   ProviderOpinion,
+  SynthesisResult,
 } from "@/lib/council/schemas";
 import type { SessionEvidencePreview } from "@/lib/council/evidencePreview";
 
@@ -49,7 +49,7 @@ type SessionApiResponse = {
   }>;
   opinions: ProviderOpinion[];
   critiques: ProviderCritique[];
-  finalAnswer: FinalAnswer | null;
+  finalAnswer: SynthesisResult | null;
   evidencePreview: SessionEvidencePreview | null;
 };
 

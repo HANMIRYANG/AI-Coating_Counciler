@@ -10,15 +10,23 @@
 //
 // Pure + deterministic: no clocks, no randomness, no I/O.
 
-import type {
-  EvidenceCoverageStatus,
-  EvidenceUsedRef,
-  FinalAnswer,
-} from "./schemas";
+import type { EvidenceCoverageStatus, EvidenceUsedRef } from "./schemas";
 import type {
   EvidencePreviewCandidate,
   SessionEvidencePreview,
 } from "./evidencePreview";
+
+// Structural carrier for the evidence-usage contract. Both FinalAnswer and
+// IdeationFinalAnswer satisfy this (identical field types), so the helpers
+// below stay shape-agnostic and `applyEvidenceUsage` preserves the concrete
+// synthesis type via the generic parameter.
+type EvidenceUsageCarrier = {
+  missingEvidence: string[];
+  evidenceUsed: EvidenceUsedRef[];
+  coveredClaims: { claim: string; evidenceChunkIds: string[] }[];
+  uncoveredClaims: string[];
+  evidenceCoverageStatus: EvidenceCoverageStatus;
+};
 
 // Bound the derived uncovered-claim list so the contract stays compact.
 const MAX_UNCOVERED_CLAIMS = 10;
@@ -40,7 +48,7 @@ function toRef(c: EvidencePreviewCandidate): EvidenceUsedRef {
 
 // Prefer the answer's own missingEvidence as the uncovered-claim list; fall
 // back to the generic note. Always bounded.
-function deriveUncoveredClaims(answer: FinalAnswer): string[] {
+function deriveUncoveredClaims(answer: EvidenceUsageCarrier): string[] {
   const fromMissing = answer.missingEvidence.filter((m) => m.trim().length > 0);
   const list =
     fromMissing.length > 0 ? fromMissing : [UNVERIFIED_CLAIM_MAPPING_NOTE];
@@ -50,7 +58,7 @@ function deriveUncoveredClaims(answer: FinalAnswer): string[] {
 // Did the model itself produce an evidence mapping? With the current prompt
 // it never does (fields default to empty / not_requested), but respect it if
 // a future prompt starts emitting one.
-function modelProducedMapping(answer: FinalAnswer): boolean {
+function modelProducedMapping(answer: EvidenceUsageCarrier): boolean {
   return (
     answer.evidenceCoverageStatus !== "not_requested" ||
     answer.evidenceUsed.length > 0 ||
@@ -70,10 +78,10 @@ function modelProducedMapping(answer: FinalAnswer): boolean {
  *   - `ok` + no model mapping → conservative `partial`: refs from preview
  *     candidates, uncovered claims derived, no covered claims.
  */
-export function applyEvidenceUsage(
-  answer: FinalAnswer,
+export function applyEvidenceUsage<T extends EvidenceUsageCarrier>(
+  answer: T,
   preview: SessionEvidencePreview | null | undefined,
-): FinalAnswer {
+): T {
   const status = preview?.retrievalStatus;
 
   if (!preview || status === "not_requested") {
@@ -83,7 +91,7 @@ export function applyEvidenceUsage(
       coveredClaims: [],
       uncoveredClaims: [],
       evidenceCoverageStatus: "not_requested",
-    };
+    } as T;
   }
 
   if (status === "no_matches") {
@@ -93,7 +101,7 @@ export function applyEvidenceUsage(
       coveredClaims: [],
       uncoveredClaims: deriveUncoveredClaims(answer),
       evidenceCoverageStatus: "no_evidence",
-    };
+    } as T;
   }
 
   if (status === "unavailable" || status === "failed") {
@@ -103,7 +111,7 @@ export function applyEvidenceUsage(
       coveredClaims: [],
       uncoveredClaims: deriveUncoveredClaims(answer),
       evidenceCoverageStatus: "unavailable",
-    };
+    } as T;
   }
 
   // status === "ok"
@@ -119,5 +127,5 @@ export function applyEvidenceUsage(
     coveredClaims: [],
     uncoveredClaims: deriveUncoveredClaims(answer),
     evidenceCoverageStatus: coverageStatus,
-  };
+  } as T;
 }

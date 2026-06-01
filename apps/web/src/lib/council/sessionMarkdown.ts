@@ -10,7 +10,7 @@
 // payloads, the per-attempt forensic log, full chunk bodies, or any
 // internal-only debug token.
 
-import type { FinalAnswer } from "./schemas";
+import type { FinalAnswer, IdeationFinalAnswer, SynthesisResult } from "./schemas";
 
 // Minimal structural input — a completed session snapshot. `finalAnswer` is
 // required (the route returns 409 not_ready when it is absent).
@@ -20,7 +20,7 @@ export type ExportableSession = {
   taskType: string;
   evidenceMode: string;
   status: string;
-  finalAnswer: FinalAnswer;
+  finalAnswer: SynthesisResult;
 };
 
 function bulletList(items: readonly string[]): string[] {
@@ -75,6 +75,9 @@ function providerSummaryLines(
 export function buildSessionMarkdown(session: ExportableSession): string {
   const a = session.finalAnswer;
 
+  // Ideation mode (docs/23) has a distinct shape — render its own document.
+  if (a.answerKind === "ideation") return buildIdeationMarkdown(session, a);
+
   const lines: string[] = [
     "# 기술검토 세션 내보내기",
     "",
@@ -106,6 +109,101 @@ export function buildSessionMarkdown(session: ExportableSession): string {
     "## 추정 / 가정",
     "",
     ...bulletList(a.assumptions),
+    "",
+    "## 누락 근거",
+    "",
+    ...bulletList(a.missingEvidence),
+    "",
+    "## 위험 표현",
+    "",
+    ...unsafePhraseLines(a.unsafePhrases),
+    "",
+    "## 권장 안전 표현",
+    "",
+    ...bulletList(a.recommendedSafeWording),
+    "",
+    "## 근거 커버리지",
+    "",
+    `- 상태: ${a.evidenceCoverageStatus}`,
+    "",
+    "### 사용된 근거",
+    "",
+    ...evidenceUsedLines(a.evidenceUsed),
+    "",
+    "### 근거 연결 주장",
+    "",
+    ...coveredClaimLines(a.coveredClaims),
+    "",
+    "### 근거 부족 항목",
+    "",
+    ...bulletList(a.uncoveredClaims),
+    "",
+    "## Provider 요약",
+    "",
+    ...providerSummaryLines(a.providerSummary),
+    "",
+  ];
+
+  return lines.join("\n");
+}
+
+function ideaLines(ideas: IdeationFinalAnswer["ideas"]): string[] {
+  if (ideas.length === 0) return ["- 없음"];
+  const out: string[] = [];
+  ideas.forEach((idea, i) => {
+    out.push(`### 아이디어 ${i + 1}: ${idea.ideaSummary}`);
+    out.push("");
+    out.push(`- 위험도: ${idea.riskLevel}`);
+    if (idea.targetApplication.trim())
+      out.push(`- 대상 적용처: ${idea.targetApplication}`);
+    if (idea.expectedBenefit.trim())
+      out.push(`- 기대 효과: ${idea.expectedBenefit}`);
+    if (idea.recommendedNextExperiment.trim())
+      out.push(`- 다음 실험: ${idea.recommendedNextExperiment}`);
+    out.push("- 필요 근거:");
+    out.push(...bulletList(idea.requiredEvidence).map((l) => `  ${l}`));
+    out.push("- 주장 금지 (doNotClaim):");
+    out.push(...bulletList(idea.doNotClaim).map((l) => `  ${l}`));
+    out.push("");
+  });
+  return out;
+}
+
+/**
+ * Ideation-mode export (docs/23, taskType=application_ideas). Same header /
+ * safety / coverage / provider sections as the standard export, with the
+ * business-answer sections replaced by the idea list. Deterministic.
+ */
+function buildIdeationMarkdown(
+  session: ExportableSession,
+  a: IdeationFinalAnswer,
+): string {
+  const lines: string[] = [
+    "# 기술검토 세션 내보내기 (아이디어 모드)",
+    "",
+    `- 세션 ID: ${session.id}`,
+    `- 작업 유형: ${session.taskType}`,
+    `- 근거 모드: ${session.evidenceMode}`,
+    `- 상태: ${session.status}`,
+    "",
+    "## 사용자 질문",
+    "",
+    session.userPrompt,
+    "",
+    "## 최종 결론",
+    "",
+    a.conclusion,
+    "",
+    "## 적용 아이디어 옵션",
+    "",
+    ...ideaLines(a.ideas),
+    "## 미해결 질문",
+    "",
+    ...bulletList(a.unresolvedQuestions),
+    "",
+    "## 후속 조사",
+    "",
+    ...bulletList(a.followUpResearch),
     "",
     "## 누락 근거",
     "",

@@ -162,6 +162,13 @@ model FinalAnswer {
   uncoveredClaims          Json?
   evidenceCoverageStatus   String?
 
+  // Synthesis output kind discriminator (docs/23). "standard" technical-review
+  // answers use the columns above; "ideation" (taskType=application_ideas)
+  // stores its full IdeationFinalAnswer payload in `ideation` while the shared
+  // safety columns above stay populated.
+  answerKind               String   @default("standard")
+  ideation                 Json?
+
   createdAt                DateTime @default(now())
 
   session CouncilSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)

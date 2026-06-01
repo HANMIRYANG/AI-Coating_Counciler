@@ -161,6 +161,7 @@ describeIf("PrismaSessionStore (integration, PRISMA_INTEGRATION=1)", () => {
     await store.create(makeRecord(id));
 
     const finalAnswer = {
+      answerKind: "standard" as const,
       conclusion: "조건부 적용 가능",
       finalMarkdown: "# 결론\n조건부 적용 가능합니다.",
       businessReadyAnswer: "업체 발송용 본문",
@@ -200,13 +201,15 @@ describeIf("PrismaSessionStore (integration, PRISMA_INTEGRATION=1)", () => {
     await store.update(id, { status: "completed", finalAnswer });
     const got = await store.get(id);
     expect(got!.finalAnswer).toBeDefined();
-    expect(got!.finalAnswer!.followUpQuestions).toEqual(finalAnswer.followUpQuestions);
-    expect(got!.finalAnswer!.providerSummary).toEqual(finalAnswer.providerSummary);
-    expect(got!.finalAnswer!.sessionStatus).toBe("partial_completed");
-    expect(got!.finalAnswer!.evidenceCoverageStatus).toBe("partial");
-    expect(got!.finalAnswer!.evidenceUsed).toEqual(finalAnswer.evidenceUsed);
-    expect(got!.finalAnswer!.coveredClaims).toEqual(finalAnswer.coveredClaims);
-    expect(got!.finalAnswer!.uncoveredClaims).toEqual(finalAnswer.uncoveredClaims);
+    const gotFa = got!.finalAnswer!;
+    if (gotFa.answerKind !== "standard") throw new Error("expected standard answer");
+    expect(gotFa.followUpQuestions).toEqual(finalAnswer.followUpQuestions);
+    expect(gotFa.providerSummary).toEqual(finalAnswer.providerSummary);
+    expect(gotFa.sessionStatus).toBe("partial_completed");
+    expect(gotFa.evidenceCoverageStatus).toBe("partial");
+    expect(gotFa.evidenceUsed).toEqual(finalAnswer.evidenceUsed);
+    expect(gotFa.coveredClaims).toEqual(finalAnswer.coveredClaims);
+    expect(gotFa.uncoveredClaims).toEqual(finalAnswer.uncoveredClaims);
   });
 
   it("listRecent returns newest-first SessionSummary entries", async () => {

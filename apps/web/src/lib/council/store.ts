@@ -13,7 +13,11 @@ import type {
   TaskType,
   EvidenceMode,
 } from "./types";
-import type { ProviderOpinion, ProviderCritique, FinalAnswer } from "./schemas";
+import type {
+  ProviderOpinion,
+  ProviderCritique,
+  SynthesisResult,
+} from "./schemas";
 import type { SessionEvidencePreview } from "./evidencePreview";
 
 /**
@@ -93,7 +97,7 @@ export type SessionRecord = {
   attempts: ProviderAttemptRecord[];
   opinions: ProviderOpinion[];
   critiques: ProviderCritique[];
-  finalAnswer?: FinalAnswer;
+  finalAnswer?: SynthesisResult;
   /**
    * Bounded internal-evidence retrieval preview (Step 7). Set once by the
    * orchestrator preflight. `not_requested` for ai_only. Exposed in the

@@ -311,12 +311,14 @@ describe("Fix 3 — Round 2 outcome reflected in final status", () => {
     const o = new CouncilOrchestrator(reg, fastTiming({}), store);
     await o.run(sess.id);
     const final = await store.get(sess.id);
-    expect(final?.finalAnswer?.businessReadyAnswer).toMatch(
-      /Round 2 상호비판이 수행되지 못/,
-    );
-    expect(final?.finalAnswer?.internalMemo).toMatch(
-      /Round 2 상호비판이 수행되지 못/,
-    );
+    const fa = final?.finalAnswer;
+    expect(fa?.answerKind).toBe("standard");
+    expect(
+      fa?.answerKind === "standard" ? fa.businessReadyAnswer : "",
+    ).toMatch(/Round 2 상호비판이 수행되지 못/);
+    expect(
+      fa?.answerKind === "standard" ? fa.internalMemo : "",
+    ).toMatch(/Round 2 상호비판이 수행되지 못/);
   });
 });
 
@@ -602,7 +604,9 @@ describe("Fix 5 — SafetyGuard dedup + no emoji", () => {
     const final = await store.get(sess.id);
 
     // No emoji in the limited-mode warning.
-    const business = final?.finalAnswer?.businessReadyAnswer ?? "";
+    const fa = final?.finalAnswer;
+    const business =
+      fa?.answerKind === "standard" ? fa.businessReadyAnswer : "";
     expect(business).not.toContain("⚠");
     expect(business).toContain("[제한적 검토 안내]");
 

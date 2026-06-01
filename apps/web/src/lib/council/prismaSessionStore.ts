@@ -43,10 +43,12 @@ import type {
   SessionStatus,
   TaskType,
 } from "./types";
-import type {
-  FinalAnswer,
-  ProviderCritique,
-  ProviderOpinion,
+import {
+  IdeationFinalAnswerSchema,
+  type FinalAnswer,
+  type ProviderCritique,
+  type ProviderOpinion,
+  type SynthesisResult,
 } from "./schemas";
 import {
   clampRecentLimit,
@@ -154,8 +156,14 @@ function attemptFromRow(r: ProviderAttemptLog): ProviderAttemptRecord {
   };
 }
 
-function finalAnswerFromRow(r: FinalAnswerRow): FinalAnswer {
+function finalAnswerFromRow(r: FinalAnswerRow): SynthesisResult {
+  // Ideation rows persist their full IdeationFinalAnswer payload in `ideation`.
+  // Re-validate through the schema so defaults / shape are guaranteed.
+  if (r.answerKind === "ideation" && r.ideation != null) {
+    return IdeationFinalAnswerSchema.parse(r.ideation);
+  }
   return {
+    answerKind: "standard",
     conclusion: r.conclusion,
     finalMarkdown: r.finalMarkdown,
     businessReadyAnswer: r.businessReadyAnswer ?? "",
@@ -247,42 +255,60 @@ export class PrismaSessionStore implements SessionStore {
         patch.evidencePreview as unknown as Prisma.InputJsonValue;
 
     // FinalAnswer is stored in its own table — create a new revision row.
+    // Two output kinds share the table: "standard" uses the dedicated columns;
+    // "ideation" (docs/23) persists its full payload in `ideation` while the
+    // shared safety columns stay populated. Standard-only columns are narrowed
+    // via the `answerKind` discriminator so they read NULL for ideation rows.
     if (patch.finalAnswer) {
+      const fa = patch.finalAnswer;
       await this.client.finalAnswer.create({
         data: {
           sessionId: id,
           revisionNumber: 1,
           status: patch.status ?? "completed",
-          conclusion: patch.finalAnswer.conclusion,
-          finalMarkdown: patch.finalAnswer.finalMarkdown,
-          businessReadyAnswer: patch.finalAnswer.businessReadyAnswer,
-          internalMemo: patch.finalAnswer.internalMemo,
+          answerKind: fa.answerKind,
+          ideation:
+            fa.answerKind === "ideation"
+              ? (fa as unknown as Prisma.InputJsonValue)
+              : Prisma.DbNull,
+          conclusion: fa.conclusion,
+          finalMarkdown: fa.finalMarkdown,
+          businessReadyAnswer:
+            fa.answerKind === "standard" ? fa.businessReadyAnswer : null,
+          internalMemo:
+            fa.answerKind === "standard" ? fa.internalMemo : null,
           evidenceBackedClaims:
-            patch.finalAnswer.evidenceBackedClaims as Prisma.InputJsonValue,
-          assumptions: patch.finalAnswer.assumptions as Prisma.InputJsonValue,
-          missingEvidence:
-            patch.finalAnswer.missingEvidence as Prisma.InputJsonValue,
+            fa.answerKind === "standard"
+              ? (fa.evidenceBackedClaims as Prisma.InputJsonValue)
+              : Prisma.DbNull,
+          assumptions:
+            fa.answerKind === "standard"
+              ? (fa.assumptions as Prisma.InputJsonValue)
+              : Prisma.DbNull,
+          missingEvidence: fa.missingEvidence as Prisma.InputJsonValue,
           unsafePhrases:
-            patch.finalAnswer.unsafePhrases as unknown as Prisma.InputJsonValue,
+            fa.unsafePhrases as unknown as Prisma.InputJsonValue,
           recommendedSafeWording:
-            patch.finalAnswer.recommendedSafeWording as Prisma.InputJsonValue,
+            fa.recommendedSafeWording as Prisma.InputJsonValue,
           unresolvedDisagreements:
-            patch.finalAnswer.unresolvedDisagreements as Prisma.InputJsonValue,
+            fa.answerKind === "standard"
+              ? (fa.unresolvedDisagreements as Prisma.InputJsonValue)
+              : Prisma.DbNull,
           followUpQuestions:
-            patch.finalAnswer.followUpQuestions as Prisma.InputJsonValue,
+            fa.answerKind === "standard"
+              ? (fa.followUpQuestions as Prisma.InputJsonValue)
+              : Prisma.DbNull,
           providerSummary:
-            patch.finalAnswer.providerSummary as unknown as Prisma.InputJsonValue,
-          sessionStatus: patch.finalAnswer.sessionStatus ?? null,
-          riskLevel: patch.finalAnswer.riskLevel,
-          confidenceScore: patch.finalAnswer.confidenceScore,
+            fa.providerSummary as unknown as Prisma.InputJsonValue,
+          sessionStatus: fa.sessionStatus ?? null,
+          riskLevel: fa.riskLevel,
+          confidenceScore: fa.confidenceScore,
           evidenceUsed:
-            patch.finalAnswer.evidenceUsed as unknown as Prisma.InputJsonValue,
+            fa.evidenceUsed as unknown as Prisma.InputJsonValue,
           coveredClaims:
-            patch.finalAnswer.coveredClaims as unknown as Prisma.InputJsonValue,
-          uncoveredClaims:
-            patch.finalAnswer.uncoveredClaims as Prisma.InputJsonValue,
-          evidenceCoverageStatus:
-            patch.finalAnswer.evidenceCoverageStatus ?? null,
+            fa.coveredClaims as unknown as Prisma.InputJsonValue,
+          uncoveredClaims: fa.uncoveredClaims as Prisma.InputJsonValue,
+          evidenceCoverageStatus: fa.evidenceCoverageStatus ?? null,
         },
       });
     }

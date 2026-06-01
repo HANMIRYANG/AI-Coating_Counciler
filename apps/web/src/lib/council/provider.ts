@@ -11,7 +11,11 @@ import type {
   ProviderId,
   SynthesisInput,
 } from "./types";
-import type { ProviderCritique, ProviderOpinion, FinalAnswer } from "./schemas";
+import type {
+  ProviderCritique,
+  ProviderOpinion,
+  SynthesisResult,
+} from "./schemas";
 
 export interface AiProviderAdapter {
   readonly id: ProviderId;
@@ -31,7 +35,7 @@ export interface AiProviderAdapter {
   generateSynthesis?(
     input: SynthesisInput,
     options: ProviderCallOptions,
-  ): Promise<FinalAnswer>;
+  ): Promise<SynthesisResult>;
 
   healthCheck?(): Promise<boolean>;
 }

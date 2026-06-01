@@ -347,6 +347,92 @@ ${critiquesBlock}`,
 }
 
 /**
+ * Ideation-mode synthesis prompt (docs/23, taskType=application_ideas).
+ *
+ * Unlike the standard synthesis (single business-ready answer), this asks the
+ * final AI to consolidate Round 1/2 into a bounded list of pre-validation idea
+ * options. The shared domain-safety surface (unsafePhrases / missingEvidence /
+ * recommendedSafeWording / riskLevel) is REQUIRED so the orchestrator safety
+ * guard still runs and the risk panels stay populated.
+ */
+export function buildIdeationSynthesisMessages(
+  providerLabel: string,
+  input: SynthesisInput,
+) {
+  const opinionsBlock = input.opinions
+    .map(
+      (o, i) =>
+        `--- 의견 #${i + 1} from ${o.providerId} ---\n${JSON.stringify(o, null, 2)}`,
+    )
+    .join("\n\n");
+
+  const critiquesBlock = input.critiques
+    .map(
+      (c, i) =>
+        `--- 비판 #${i + 1} from ${c.providerId} ---\n${JSON.stringify(c, null, 2)}`,
+    )
+    .join("\n\n");
+
+  const system = `${DOMAIN_SAFETY_POLICY_SUMMARY}
+
+당신은 한국 특수도료/기능성 코팅제 제조사의 기술검토 회의 최종 합성 AI(${providerLabel})입니다.
+이 세션은 아이디어 모드(application_ideas)입니다. Round 1 의견과 Round 2 비판을 종합하여,
+단정적 성능/인증 주장이 아닌 "검증 전 단계의 아이디어 옵션 목록"을 만드세요.
+
+${taskTypeGuidance(input.taskType)}
+
+${JSON_RULES_KO}
+
+추가 규칙:
+- 모든 아이디어는 가설/검토 필요 단계입니다. 단정 표현을 사용하지 마세요.
+- 각 아이디어의 doNotClaim에는 "이 아이디어로 아직 주장하면 안 되는 표현"을 명시하세요.
+- 고위험 카테고리(불연/난연/배터리/화재/인증/식품/SDS)에서는 riskLevel을 high 이상으로 두고,
+  단정 표현은 unsafePhrases로 분리하세요.
+- finalMarkdown은 사람이 읽을 수 있는 한국어 요약(아이디어 목록 + 다음 실험 + 주의사항)으로 작성하세요.
+
+응답 JSON 스키마:
+{
+  "answerKind": "ideation",
+  "ideas": [{
+    "ideaSummary": string,
+    "targetApplication": string,
+    "expectedBenefit": string,
+    "requiredEvidence": string[],
+    "riskLevel": "low"|"medium"|"high"|"critical",
+    "recommendedNextExperiment": string,
+    "doNotClaim": string[]
+  }],
+  "unresolvedQuestions": string[],
+  "followUpResearch": string[],
+  "conclusion": string,
+  "finalMarkdown": string,
+  "missingEvidence": string[],
+  "unsafePhrases": [{ "phrase": string, "reason"?: string, "recommended"?: string }],
+  "recommendedSafeWording": string[],
+  "riskLevel": "low"|"medium"|"high"|"critical",
+  "confidenceScore": number,
+  "providerSummary": [{ "providerId": "openai"|"anthropic"|"gemini", "status": string, "latencyMs"?: number }]
+}
+
+특히 다음 한국어 표현은 unsafePhrases에 반드시 포함하세요: ${KNOWN_DANGEROUS_PHRASES_LIST}`;
+
+  const user = withEvidenceBlock(
+    `taskType: ${input.taskType}
+사용자 질문:
+${input.userPrompt}
+
+Round 1 의견:
+${opinionsBlock}
+
+Round 2 비판:
+${critiquesBlock}`,
+    input.evidenceContext,
+  );
+
+  return { system, user };
+}
+
+/**
  * Thrown when no parseable JSON object can be extracted from raw LLM output.
  * Carries the original raw text so the orchestrator can persist it on the
  * call record for debugging.

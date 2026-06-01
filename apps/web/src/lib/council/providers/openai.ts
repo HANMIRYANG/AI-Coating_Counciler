@@ -24,14 +24,16 @@ import type {
 } from "../types";
 import {
   FinalAnswerSchema,
+  IdeationFinalAnswerSchema,
   ProviderCritiqueSchema,
   ProviderOpinionSchema,
-  type FinalAnswer,
   type ProviderCritique,
   type ProviderOpinion,
+  type SynthesisResult,
 } from "../schemas";
 import {
   buildCritiqueMessages,
+  buildIdeationSynthesisMessages,
   buildInitialOpinionMessages,
   buildSynthesisMessages,
   extractJsonObject,
@@ -116,7 +118,16 @@ export class OpenAiProviderAdapter implements AiProviderAdapter {
   async generateSynthesis(
     input: SynthesisInput,
     options: ProviderCallOptions,
-  ): Promise<FinalAnswer> {
+  ): Promise<SynthesisResult> {
+    // Ideation mode (docs/23) produces a distinct synthesis shape.
+    if (input.taskType === "application_ideas") {
+      const { system, user } = buildIdeationSynthesisMessages(
+        this.displayName,
+        input,
+      );
+      const { raw, parsed } = await this.chatJson(system, user, options);
+      return validateOrThrow(IdeationFinalAnswerSchema, parsed, raw);
+    }
     const { system, user } = buildSynthesisMessages(this.displayName, input);
     const { raw, parsed } = await this.chatJson(system, user, options);
     return validateOrThrow(FinalAnswerSchema, parsed, raw);

@@ -25,8 +25,11 @@ import { PROVIDER_IDS } from "./providers";
 import {
   type FinalAnswer,
   FinalAnswerSchema,
+  type IdeationFinalAnswer,
+  IdeationFinalAnswerSchema,
   type ProviderCritique,
   type ProviderOpinion,
+  type SynthesisResult,
 } from "./schemas";
 import {
   computeRiskLevel,
@@ -656,7 +659,7 @@ export class CouncilOrchestrator {
     critiqueCount: number,
     accuracyMode: AccuracyMode,
     sessionDeadline: number,
-  ): Promise<FinalAnswer> {
+  ): Promise<SynthesisResult> {
     // GPT primary, Claude fallback per docs/05_round_based_orchestration.md.
     const order: ProviderId[] = ["openai", "anthropic", "gemini"];
 
@@ -794,10 +797,17 @@ export class CouncilOrchestrator {
   }
 
   private applySafetyGuard(
-    ans: FinalAnswer,
+    ans: SynthesisResult,
     opinionCount: number,
     critiqueCount: number,
-  ): FinalAnswer {
+  ): SynthesisResult {
+    // Ideation answers carry a different shape (no businessReadyAnswer); run
+    // the parallel ideation-aware guard so the domain-safety surface still
+    // gets populated (CLAUDE.md non-negotiable #5).
+    if (ans.answerKind === "ideation") {
+      return this.applyIdeationSafetyGuard(ans, opinionCount, critiqueCount);
+    }
+
     const finalText = [
       ans.conclusion,
       ans.finalMarkdown,
@@ -862,10 +872,84 @@ export class CouncilOrchestrator {
     });
   }
 
+  // Ideation-mode safety guard. Mirrors the standard guard but scans the idea
+  // text (no businessReadyAnswer/internalMemo exist) and writes warnings +
+  // disclaimer into finalMarkdown so the risk / missing-evidence panels stay
+  // populated identically to the standard path.
+  private applyIdeationSafetyGuard(
+    ans: IdeationFinalAnswer,
+    opinionCount: number,
+    critiqueCount: number,
+  ): IdeationFinalAnswer {
+    const ideaText = ans.ideas
+      .map((i) =>
+        [
+          i.ideaSummary,
+          i.expectedBenefit,
+          i.recommendedNextExperiment,
+          ...i.doNotClaim,
+        ].join(" "),
+      )
+      .join("\n");
+    const finalText = [ans.conclusion, ans.finalMarkdown, ideaText].join(
+      "\n\n",
+    );
+    const detected = detectUnsafePhrases(finalText);
+
+    const mergedUnsafe = dedupUnsafePhrases([
+      ...ans.unsafePhrases,
+      ...detected.map((d) => ({
+        phrase: d.phrase,
+        reason: "도메인 안전성 정책에 따라 자동 탐지됨",
+        recommended: d.recommended,
+      })),
+    ]);
+
+    const mergedSafeWording = dedupStrings([
+      ...ans.recommendedSafeWording,
+      ...collectRecommendedWordings(detected),
+    ]);
+
+    const risk = computeRiskLevel({
+      unsafePhrases: detected,
+      missingEvidence: ans.missingEvidence,
+      taskType: "",
+      text: finalText,
+    });
+
+    let finalMarkdown = ans.finalMarkdown;
+
+    if (critiqueCount === 0) {
+      const critiqueWarning =
+        "[경고] Round 2 상호비판이 수행되지 못했고, 본 아이디어는 Round 1 의견만을 기반으로 정리되었습니다. 외부 활용 전 반드시 추가 검토가 필요합니다.";
+      finalMarkdown = `${critiqueWarning}\n\n${finalMarkdown}`;
+    }
+    if (opinionCount <= 1) {
+      const limitedWarning =
+        "[제한적 검토 안내] 본 아이디어는 일부 AI만 응답하여 제한적 검토 결과입니다. 외부 활용 전 추가 검토가 필요합니다.";
+      finalMarkdown = `${limitedWarning}\n\n${finalMarkdown}`;
+    }
+
+    finalMarkdown = `${finalMarkdown}\n\n---\n_${FINAL_ANSWER_DISCLAIMER_KO}_`;
+
+    return IdeationFinalAnswerSchema.parse({
+      ...ans,
+      unsafePhrases: mergedUnsafe,
+      recommendedSafeWording: mergedSafeWording,
+      riskLevel:
+        priorityRiskLevel(ans.riskLevel, risk) ?? ans.riskLevel ?? "medium",
+      finalMarkdown,
+    });
+  }
+
   private fallbackSynthesis(
     input: SynthesisInput,
     opinionCount: number,
-  ): FinalAnswer {
+  ): SynthesisResult {
+    if (input.taskType === "application_ideas") {
+      return this.fallbackIdeation(input, opinionCount);
+    }
+
     const evidence = input.opinions.flatMap((o) => o.evidenceBackedClaims);
     const missing = Array.from(
       new Set([
@@ -907,6 +991,58 @@ export class CouncilOrchestrator {
       confidenceScore: 0.3,
       followUpQuestions: [],
       unresolvedDisagreements: [],
+      providerSummary: input.opinions.map((o) => ({
+        providerId: o.providerId,
+        status: "succeeded",
+      })),
+      sessionStatus: "fallback_summary",
+    });
+  }
+
+  // Deterministic ideation fallback when AI synthesis fails for an
+  // application_ideas session. Derives a minimal, safe idea list from the
+  // Round 1 opinions so the answer still carries the safety surface.
+  private fallbackIdeation(
+    input: SynthesisInput,
+    opinionCount: number,
+  ): IdeationFinalAnswer {
+    const missing = Array.from(
+      new Set([
+        ...input.opinions.flatMap((o) => o.missingEvidence),
+        ...input.critiques.flatMap((c) => c.missingEvidenceFound),
+      ]),
+    );
+    const conclusion =
+      opinionCount === 0
+        ? "AI 검토가 모두 실패하여 아이디어를 생성할 수 없습니다. 추가 검토가 필요합니다."
+        : "AI 합성 단계가 실패하여 Round 1 의견 기반의 결정론적 아이디어 요약을 제공합니다. 모든 항목은 가설이며 추가 검토가 필요합니다.";
+
+    return IdeationFinalAnswerSchema.parse({
+      ideas: input.opinions.slice(0, 3).map((o) => ({
+        ideaSummary: `[${o.providerId}] ${o.summary}`,
+        targetApplication: "",
+        expectedBenefit: "",
+        requiredEvidence: o.missingEvidence,
+        riskLevel: "high",
+        recommendedNextExperiment:
+          "필요 근거(시험성적서/기재 호환성) 확보 후 단계적 검토",
+        doNotClaim: ["단정적 성능 주장", "인증 완료 표현"],
+      })),
+      unresolvedQuestions: [],
+      followUpResearch: [],
+      conclusion,
+      finalMarkdown: [
+        `## (Fallback) 아이디어 모드 요약`,
+        conclusion,
+        ``,
+        `### 종합 의견`,
+        ...input.opinions.map((o) => `- [${o.providerId}] ${o.summary}`),
+      ].join("\n"),
+      missingEvidence: missing,
+      unsafePhrases: [],
+      recommendedSafeWording: [],
+      riskLevel: "high",
+      confidenceScore: 0.3,
       providerSummary: input.opinions.map((o) => ({
         providerId: o.providerId,
         status: "succeeded",

@@ -170,7 +170,11 @@ describe("CouncilOrchestrator", () => {
     expect(final?.status).toBe("limited_answer");
     expect(final?.finalAnswer).toBeTruthy();
     // Business-ready answer should carry the limited-mode warning.
-    expect(final?.finalAnswer?.businessReadyAnswer).toMatch(/제한적/);
+    const fa = final?.finalAnswer;
+    expect(fa?.answerKind).toBe("standard");
+    expect(
+      fa?.answerKind === "standard" ? fa.businessReadyAnswer : "",
+    ).toMatch(/제한적/);
   });
 
   it("marks session failed when all providers fail in Round 1", async () => {

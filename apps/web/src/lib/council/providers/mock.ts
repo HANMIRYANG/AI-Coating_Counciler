@@ -19,9 +19,12 @@ import type {
 } from "../types";
 import {
   FinalAnswerSchema,
+  IdeationFinalAnswerSchema,
   type FinalAnswer,
+  type IdeationFinalAnswer,
   type ProviderCritique,
   type ProviderOpinion,
+  type SynthesisResult,
 } from "../schemas";
 import { sleep } from "../timeout";
 import { detectUnsafePhrases } from "../safety";
@@ -192,11 +195,13 @@ export class MockProviderAdapter implements AiProviderAdapter {
   async generateSynthesis(
     input: SynthesisInput,
     options: ProviderCallOptions,
-  ): Promise<FinalAnswer> {
+  ): Promise<SynthesisResult> {
     const model = this.resolveModel(options);
     this.callsByRound.synthesis.push({ model });
     await this.applyDelay(options, this.cfg.synthesisFailureMode);
-    return buildMockSynthesis(this.id, input);
+    return input.taskType === "application_ideas"
+      ? buildMockIdeation(input)
+      : buildMockSynthesis(this.id, input);
   }
 }
 
@@ -371,6 +376,84 @@ function buildMockSynthesis(
     unresolvedDisagreements: [
       "적용 부위 범위(표면 vs 외피층) 권고 수준 — 추가 시험으로 해소 권장.",
     ],
+    providerSummary: input.opinions.map((o) => ({
+      providerId: o.providerId,
+      status: "succeeded",
+    })),
+    sessionStatus: opinionCount === 3 ? "completed" : "partial_completed",
+  });
+}
+
+function buildMockIdeation(input: SynthesisInput): IdeationFinalAnswer {
+  const opinionCount = input.opinions.length;
+  const conclusion =
+    "검증 전 단계의 적용 아이디어 옵션을 제시합니다. 모든 아이디어는 가설이며, 단정적 성능/인증 표현은 추가 시험 후에만 사용 가능합니다.";
+
+  // Parse through the schema so defaults (answerKind, evidence-usage fields)
+  // are applied; the orchestrator populates the real evidence contract after.
+  return IdeationFinalAnswerSchema.parse({
+    ideas: [
+      {
+        ideaSummary:
+          "방열 코팅을 배터리 모듈 간 절연 보조 용도로 외피층에 한정 적용 검토",
+        targetApplication: "EV 배터리팩 모듈 외피층(셀 직접 접촉 제외)",
+        expectedBenefit: "방열 보조 및 표면 보호 가능성(시험 조건에서 확인 필요)",
+        requiredEvidence: [
+          "방열 성능 시험성적서(시험 조건 명시)",
+          "기재 호환성/부착 시험 결과",
+          "전해액 누액 환경 화학적 적합성 데이터",
+        ],
+        riskLevel: "high",
+        recommendedNextExperiment:
+          "대표 기재에 도포 후 열전도/표면온도 비교 시험(조건 고정)부터 진행",
+        doNotClaim: [
+          "배터리 화재를 방지한다",
+          "열폭주를 막는다",
+          "100% 안전",
+        ],
+      },
+      {
+        ideaSummary: "제안서용 표현은 '검토 단계 가설'로만 한정해 사용",
+        targetApplication: "영업/제안 커뮤니케이션",
+        expectedBenefit: "과장·단정 표현으로 인한 광고법/클레임 위험 회피",
+        requiredEvidence: ["검증된 시험성적서 확보 여부"],
+        riskLevel: "medium",
+        recommendedNextExperiment:
+          "시험성적서 확보 전까지 외부 발송 문구에 단정 표현 미사용 원칙 수립",
+        doNotClaim: ["인증 완료", "완전 방지"],
+      },
+    ].slice(0, opinionCount > 0 ? 2 : 1),
+    unresolvedQuestions: [
+      "적용 대상의 사용 온도/진동/누액 환경 사양은 무엇입니까?",
+      "요청 인증 규격(UN 38.3 / KS F 2271 등)이 있습니까?",
+    ],
+    followUpResearch: [
+      "방열 성능 시험 방법/규격 후보 조사",
+      "유사 적용 사례 및 실패 사례 수집",
+    ],
+    conclusion,
+    finalMarkdown: [
+      `## (아이디어 모드) 검토 전 적용 아이디어`,
+      conclusion,
+      ``,
+      `### 다음 실험 우선순위`,
+      `- 대표 기재 도포 후 표면온도/열전도 비교 시험(조건 고정)`,
+      ``,
+      `### 주의`,
+      `- 모든 아이디어는 가설 단계이며 단정 표현 금지.`,
+    ].join("\n"),
+    missingEvidence: [
+      "방열 성능 시험성적서(시험 조건 명시)",
+      "기재 호환성 시험 결과",
+      "전해액 누액 환경 화학적 적합성 데이터",
+    ],
+    unsafePhrases: [],
+    recommendedSafeWording: [
+      "‘화재 방지’ → ‘특정 시험 조건에서 표면 보호/방열 보조 가능성’",
+      "‘인증 완료’ → ‘인증기관 확인 필요’",
+    ],
+    riskLevel: "high",
+    confidenceScore: 0.5,
     providerSummary: input.opinions.map((o) => ({
       providerId: o.providerId,
       status: "succeeded",

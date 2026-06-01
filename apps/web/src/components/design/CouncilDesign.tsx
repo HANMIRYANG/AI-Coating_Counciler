@@ -12,8 +12,10 @@ import type {
 } from "@/lib/council/types";
 import type {
   FinalAnswer,
+  IdeationFinalAnswer,
   ProviderCritique,
   ProviderOpinion,
+  SynthesisResult,
 } from "@/lib/council/schemas";
 import { usePathname } from "next/navigation";
 import { Icons, AiAvatar, type IconName } from "./icons";
@@ -611,7 +613,7 @@ export function SessionWorkspace({
     providerHealth: ProviderHealthView[];
     opinions: ProviderOpinion[];
     critiques: ProviderCritique[];
-    finalAnswer: FinalAnswer | null;
+    finalAnswer: SynthesisResult | null;
     errorMessage: string | null;
     evidencePreview?: SessionEvidencePreview | null;
   } | null;
@@ -701,10 +703,17 @@ export function SessionWorkspace({
                   )}
 
                   {data.finalAnswer ? (
-                    <FinalAnswerCard
-                      answer={data.finalAnswer}
-                      sessionId={sessionId}
-                    />
+                    data.finalAnswer.answerKind === "ideation" ? (
+                      <IdeationAnswerCard
+                        answer={data.finalAnswer}
+                        sessionId={sessionId}
+                      />
+                    ) : (
+                      <FinalAnswerCard
+                        answer={data.finalAnswer}
+                        sessionId={sessionId}
+                      />
+                    )
                   ) : (
                     <div className="status-footer">
                       <span className="ai-streaming">
@@ -902,15 +911,25 @@ function SynthCard({ critiques }: { critiques: ProviderCritique[] }) {
   );
 }
 
-function VerifyCard({ answer }: { answer: FinalAnswer }) {
+function VerifyCard({ answer }: { answer: SynthesisResult }) {
+  const firstRow =
+    answer.answerKind === "ideation"
+      ? {
+          icon: "Sparkles" as IconName,
+          label: "도출 아이디어",
+          sub: "ideas",
+          value: `${answer.ideas.length}건`,
+          ok: answer.ideas.length > 0,
+        }
+      : {
+          icon: "FileText" as IconName,
+          label: "근거 있는 주장",
+          sub: "evidenceBackedClaims",
+          value: `${answer.evidenceBackedClaims.length}건`,
+          ok: answer.evidenceBackedClaims.length > 0,
+        };
   const rows = [
-    {
-      icon: "FileText" as IconName,
-      label: "근거 있는 주장",
-      sub: "evidenceBackedClaims",
-      value: `${answer.evidenceBackedClaims.length}건`,
-      ok: answer.evidenceBackedClaims.length > 0,
-    },
+    firstRow,
     {
       icon: "AlertTriangle" as IconName,
       label: "누락 근거",
@@ -1085,6 +1104,139 @@ function FinalAnswerCard({
             title="후속 질문"
             items={answer.followUpQuestions}
           />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Ideation-mode answer card (docs/23, taskType=application_ideas). Renders the
+// idea options + shared safety surface. Distinct from FinalAnswerCard: there is
+// no single "업체 발송용" answer — ideas are pre-validation hypotheses.
+function IdeationAnswerCard({
+  answer,
+  sessionId,
+}: {
+  answer: IdeationFinalAnswer;
+  sessionId: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    await navigator.clipboard?.writeText(answer.finalMarkdown);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1400);
+  };
+
+  return (
+    <div className="final-wrap fade-in">
+      <div className="fitness-card">
+        <div className="fitness-left">
+          <div className="fitness-shield">
+            <Icons.Sparkles />
+          </div>
+          <div className="fitness-text">
+            <b>아이디어 모드 (검토 전 단계)</b>
+            <span>{answer.conclusion}</span>
+          </div>
+        </div>
+        <div className="fitness-checks">
+          <div>
+            <Icons.Check /> 가설 단계
+          </div>
+          <div>
+            <Icons.Check /> 단정 표현 분리
+          </div>
+          <div>
+            <Icons.Check /> 다음 실험 제안
+          </div>
+        </div>
+      </div>
+
+      <div className="answer-card">
+        <div className="answer-h">
+          <Icons.Sparkles size={16} />
+          <b>적용 아이디어 옵션</b>
+          <span className="meta">risk · {riskLabel(answer.riskLevel)}</span>
+        </div>
+        <div className="answer-body compact">
+          {answer.ideas.length === 0 ? (
+            <p className="muted">도출된 아이디어가 없습니다.</p>
+          ) : (
+            answer.ideas.map((idea, idx) => (
+              <div className="detail-group" key={idx}>
+                <b>
+                  아이디어 {idx + 1}: {idea.ideaSummary}{" "}
+                  <span className="badge">{riskLabel(idea.riskLevel)}</span>
+                </b>
+                {idea.targetApplication && (
+                  <p className="muted">대상 적용처: {idea.targetApplication}</p>
+                )}
+                {idea.expectedBenefit && (
+                  <p className="muted">기대 효과: {idea.expectedBenefit}</p>
+                )}
+                {idea.recommendedNextExperiment && (
+                  <p className="muted">
+                    다음 실험: {idea.recommendedNextExperiment}
+                  </p>
+                )}
+                {idea.requiredEvidence.length > 0 && (
+                  <>
+                    <b>필요 근거</b>
+                    <MiniList items={idea.requiredEvidence} empty="" />
+                  </>
+                )}
+                {idea.doNotClaim.length > 0 && (
+                  <>
+                    <b>주장 금지 (doNotClaim)</b>
+                    <ul>
+                      {idea.doNotClaim.map((c, i) => (
+                        <li key={i}>
+                          <span className="badge evidence-coverage-danger">
+                            금지
+                          </span>{" "}
+                          {c}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+        <div className="answer-actions">
+          <button className="btn" type="button" onClick={copy}>
+            <Icons.Copy /> {copied ? "복사됨" : "요약 복사"}
+          </button>
+          <a
+            className="btn"
+            href={`/api/council-sessions/${sessionId}/export?format=markdown`}
+            download={`council-session-${sessionId}.md`}
+          >
+            <Icons.Download /> MD 내보내기
+          </a>
+        </div>
+      </div>
+
+      <div className="answer-card secondary">
+        <div className="answer-h">
+          <Icons.Shield size={16} />
+          <b>안전성 점검 및 누락 근거</b>
+        </div>
+        <div className="answer-body compact">
+          <RiskPhrasePanel
+            unsafePhrases={answer.unsafePhrases}
+            recommendedSafeWording={answer.recommendedSafeWording}
+            riskLevel={answer.riskLevel}
+            confidenceScore={answer.confidenceScore}
+          />
+          <DetailGroup title="누락 근거" items={answer.missingEvidence} />
+          <FinalEvidenceCoveragePanel answer={answer} />
+          <DetailGroup
+            title="미해결 질문"
+            items={answer.unresolvedQuestions}
+          />
+          <DetailGroup title="후속 조사" items={answer.followUpResearch} />
         </div>
       </div>
     </div>
