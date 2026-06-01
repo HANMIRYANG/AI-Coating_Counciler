@@ -245,9 +245,9 @@ const TASK_MODES: Array<{ value: TaskType; label: string; hint: string }> = [
   },
 ];
 
-// Evidence mode selector (docs/23 §6.2). ai_only + internal_docs are live;
-// internal_docs_web (external official-source lookup) is not wired yet and is
-// offered as a disabled "준비 중" option so the UI stays honest.
+// Evidence mode selector (docs/23 §6.2). All three modes are live: ai_only,
+// internal_docs (keyword RAG over uploaded docs), and internal_docs_web
+// (internal docs + server-side fetch of user-provided official-source URLs).
 const EVIDENCE_MODES: Array<{
   value: EvidenceMode;
   label: string;
@@ -669,7 +669,8 @@ export function HomeWorkspace({
           <div className="section-title">
             <h2>근거 출처 준비 상태</h2>
             <span className="sub">
-              현재는 카탈로그/정책 메타데이터만 노출됩니다.
+              근거 모드에서 사내 문서 검색과 공식 출처 URL 조회를 사용할 수
+              있습니다.
             </span>
           </div>
           <div
@@ -678,8 +679,8 @@ export function HomeWorkspace({
           >
             <ul className="readiness-status">
               <li>
-                <b>공식 출처 조회</b>
-                <span className="readiness-badge">준비 중</span>
+                <b>공식 출처 조회 (URL 입력)</b>
+                <span className="readiness-badge">사용 가능</span>
               </li>
               <li>
                 <b>사내 문서 / RAG (키워드)</b>
@@ -694,8 +695,9 @@ export function HomeWorkspace({
             </div>
             <p className="readiness-note">
               카탈로그 포함 자체로 해당 기관 보고서가 모든 클레임에 자동
-              유효함을 의미하지 않습니다. 실제 조회는 추후 단계에서
-              연결될 예정입니다.
+              유효함을 의미하지 않습니다. 공식 출처는 “사내 자료 + 공식 출처”
+              모드에서 입력한 URL을 서버가 조회하며, 화이트리스트 외 도메인은
+              내부 참고용(인용 불가)으로 처리됩니다.
             </p>
           </div>
 
