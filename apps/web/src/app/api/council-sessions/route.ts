@@ -63,6 +63,7 @@ export async function POST(req: Request) {
     userPrompt: parsed.data.prompt,
     taskType: parsed.data.taskType,
     evidenceMode: parsed.data.evidenceMode,
+    sourceUrls: parsed.data.sourceUrls,
     status: "created",
     createdAt: now,
     startedAt: now,

@@ -63,6 +63,11 @@ export type EvidencePreviewCandidate = {
   score: number;
   trustLevel: string;
   verificationStatus: string;
+  // Source discriminator (docs/23). Defaults to "internal_document"; external
+  // official-source URLs (internal_docs_web) use "external_url" + carry `url`.
+  // For external candidates the document/chunk fields are placeholders.
+  sourceType?: "internal_document" | "external_url";
+  url?: string;
 };
 
 export type SessionEvidencePreview = {
@@ -86,6 +91,47 @@ function toPreviewCandidate(
     score: c.score,
     trustLevel: c.trustLevel,
     verificationStatus: c.verificationStatus,
+    sourceType: "internal_document",
+  };
+}
+
+// Build a preview candidate from a successfully fetched external source
+// (internal_docs_web). Document/chunk fields are placeholders.
+export function externalPreviewCandidate(r: {
+  url: string;
+  title: string;
+  snippet: string;
+  trustLevel: string;
+}): EvidencePreviewCandidate {
+  return {
+    documentId: "",
+    filename: r.title || r.url,
+    chunkId: r.url,
+    chunkIndex: 0,
+    snippet: r.snippet,
+    metadata: null,
+    score: 0,
+    trustLevel: r.trustLevel,
+    verificationStatus: "auto_extracted",
+    sourceType: "external_url",
+    url: r.url,
+  };
+}
+
+// Merge external candidates ahead of the internal ones. If any external
+// candidate exists the overall status becomes "ok" (we have something to show)
+// even when the internal retrieval found nothing or was unavailable.
+export function withExternalCandidates(
+  base: SessionEvidencePreview,
+  external: EvidencePreviewCandidate[],
+): SessionEvidencePreview {
+  if (external.length === 0) return base;
+  const candidates = [...external, ...base.candidates];
+  return {
+    ...base,
+    retrievalStatus: "ok",
+    count: base.count + external.length,
+    candidates,
   };
 }
 

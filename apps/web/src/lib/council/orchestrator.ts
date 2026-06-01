@@ -70,12 +70,16 @@ import { EvidenceBundleService } from "@/lib/documents/evidence-bundle";
 import { DocumentServiceError } from "@/lib/documents/service";
 import {
   evidencePreviewTimeoutMs,
+  externalPreviewCandidate,
   failedPreview,
   notRequestedPreview,
   previewFromBundle,
   unavailablePreview,
+  withExternalCandidates,
+  type EvidencePreviewCandidate,
   type SessionEvidencePreview,
 } from "./evidencePreview";
+import { fetchSources } from "./sourceFetch";
 import { applyEvidenceUsage } from "./evidenceUsage";
 
 export type TimingConfig = {
@@ -1226,6 +1230,25 @@ export class CouncilOrchestrator {
       return notRequestedPreview(sess.evidenceMode);
     }
 
+    // Internal-document retrieval (Step 7). Always attempted for non-ai_only.
+    const internal = await this.runInternalEvidencePreflight(sess);
+
+    // External official-source fetch (internal_docs_web, docs/23). Side-car:
+    // runs independently of the internal retrieval and NEVER halts the run.
+    if (
+      sess.evidenceMode === "internal_docs_web" &&
+      sess.sourceUrls &&
+      sess.sourceUrls.length > 0
+    ) {
+      const external = await this.fetchExternalCandidates(sess.sourceUrls);
+      return withExternalCandidates(internal, external);
+    }
+    return internal;
+  }
+
+  private async runInternalEvidencePreflight(
+    sess: SessionRecord,
+  ): Promise<SessionEvidencePreview> {
     // Lazily construct the service so the ai_only path above never does.
     const evidence = this.evidenceService ?? new EvidenceBundleService();
     try {
@@ -1246,6 +1269,24 @@ export class CouncilOrchestrator {
       }
       const message = err instanceof Error ? err.message : String(err);
       return failedPreview(sess.evidenceMode, message);
+    }
+  }
+
+  // Fetch the user-provided official-source URLs (bounded concurrency + budget)
+  // and map successes to preview candidates. Failures are dropped — the
+  // side-car never blocks or fails the council run.
+  private async fetchExternalCandidates(
+    urls: string[],
+  ): Promise<EvidencePreviewCandidate[]> {
+    try {
+      const results = await fetchSources(urls);
+      const out: EvidencePreviewCandidate[] = [];
+      for (const r of results) {
+        if (r.ok) out.push(externalPreviewCandidate(r));
+      }
+      return out;
+    } catch {
+      return [];
     }
   }
 }

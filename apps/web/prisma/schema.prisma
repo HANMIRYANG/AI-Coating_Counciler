@@ -45,6 +45,8 @@ model CouncilSession {
   normalizedPrompt String?  @db.Text
   taskType         String
   evidenceMode     String   @default("ai_only")
+  // Optional external official-source URLs for internal_docs_web (docs/23).
+  sourceUrls       Json?
 
   // state machine
   status           String

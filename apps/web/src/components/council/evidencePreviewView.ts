@@ -18,11 +18,13 @@ export type EvidencePreviewTone = "info" | "muted" | "warn";
 
 export type EvidenceCandidateView = {
   key: string;
-  title: string; // "filename #chunkIndex"
+  title: string; // internal: "filename #chunkIndex" · external: page title
   snippet: string;
   metaSummary: string;
   trustLevel: string;
   verificationStatus: string;
+  sourceType: "internal_document" | "external_url";
+  url?: string; // present for external sources
 };
 
 export type EvidencePreviewView = {
@@ -74,13 +76,18 @@ export function formatCandidateMetadata(
 }
 
 function toCandidateView(c: EvidencePreviewCandidate): EvidenceCandidateView {
+  const isExternal = c.sourceType === "external_url";
   return {
     key: c.chunkId,
-    title: `${c.filename} #${c.chunkIndex}`,
+    title: isExternal ? c.filename : `${c.filename} #${c.chunkIndex}`,
     snippet: c.snippet,
-    metaSummary: formatCandidateMetadata(c.metadata),
+    metaSummary: isExternal
+      ? "외부 공식 출처"
+      : formatCandidateMetadata(c.metadata),
     trustLevel: c.trustLevel,
     verificationStatus: c.verificationStatus,
+    sourceType: isExternal ? "external_url" : "internal_document",
+    url: c.url,
   };
 }
 

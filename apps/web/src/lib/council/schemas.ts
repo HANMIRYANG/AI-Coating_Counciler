@@ -285,5 +285,8 @@ export const CreateSessionRequestSchema = z.object({
   prompt: z.string().min(1).max(8000),
   taskType: TaskTypeSchema,
   evidenceMode: EvidenceModeSchema.default("ai_only"),
+  // Optional official-source URLs for internal_docs_web (docs/23). Fetched
+  // server-side as a side-car; capped at 6. Ignored for other evidence modes.
+  sourceUrls: z.array(z.string().url().max(2000)).max(6).optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequestSchema>;

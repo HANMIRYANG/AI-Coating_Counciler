@@ -88,6 +88,7 @@ function reassemble(row: SessionWithRelations): SessionRecord {
     userPrompt: row.userPrompt,
     taskType: row.taskType as TaskType,
     evidenceMode: row.evidenceMode as EvidenceMode,
+    sourceUrls: (row.sourceUrls as string[] | null) ?? undefined,
     status: row.status as SessionStatus,
     currentRound: (row.currentRound ?? undefined) as RoundKey | undefined,
     createdAt: row.createdAt.getTime(),
@@ -218,6 +219,10 @@ export class PrismaSessionStore implements SessionStore {
         userPrompt: s.userPrompt,
         taskType: s.taskType,
         evidenceMode: s.evidenceMode,
+        sourceUrls:
+          s.sourceUrls === undefined
+            ? Prisma.DbNull
+            : (s.sourceUrls as unknown as Prisma.InputJsonValue),
         status: s.status,
         currentRound: s.currentRound ?? null,
         createdAt: new Date(s.createdAt),

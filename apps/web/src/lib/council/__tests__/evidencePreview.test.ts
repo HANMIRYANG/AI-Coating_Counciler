@@ -69,7 +69,8 @@ describe("previewFromBundle", () => {
     const preview = previewFromBundle("internal_docs", bundle(1));
     const c = preview.candidates[0];
     expect(c).not.toHaveProperty("content");
-    expect(c).not.toHaveProperty("sourceType");
+    // sourceType is a lightweight discriminator, not a heavy body field.
+    expect(c.sourceType).toBe("internal_document");
     expect(c.snippet).toBe("…snippet 0…");
     expect(c.trustLevel).toBe("uploaded_copy");
     expect(c.verificationStatus).toBe("auto_extracted");

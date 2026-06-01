@@ -267,8 +267,7 @@ const EVIDENCE_MODES: Array<{
   {
     value: "internal_docs_web",
     label: "사내 자료 + 공식 출처",
-    hint: "외부 공식 출처 조회는 아직 연결되지 않았습니다 (준비 중).",
-    disabled: true,
+    hint: "사내 자료 + 입력한 공식 출처 URL을 서버가 조회해 근거 후보로 사용합니다 (DB 필요).",
   },
 ];
 
@@ -473,6 +472,8 @@ export function HomeWorkspace({
   setTaskType,
   evidenceMode,
   setEvidenceMode,
+  sourceUrlsText,
+  setSourceUrlsText,
   onSubmit,
   submitting,
   error,
@@ -483,6 +484,8 @@ export function HomeWorkspace({
   setTaskType: (value: TaskType) => void;
   evidenceMode: EvidenceMode;
   setEvidenceMode: (value: EvidenceMode) => void;
+  sourceUrlsText: string;
+  setSourceUrlsText: (value: string) => void;
   onSubmit: () => void;
   submitting: boolean;
   error: string | null;
@@ -607,6 +610,28 @@ export function HomeWorkspace({
               );
             })}
           </div>
+
+          {evidenceMode === "internal_docs_web" && (
+            <div style={{ marginBottom: 8 }}>
+              <div className="section-title">
+                <h2>공식 출처 URL (최대 6개)</h2>
+                <span className="sub">
+                  줄당 1개. 화이트리스트 외 도메인은 내부 참고용(인용 불가)으로만
+                  처리됩니다.
+                </span>
+              </div>
+              <textarea
+                value={sourceUrlsText}
+                onChange={(e) => setSourceUrlsText(e.target.value)}
+                disabled={submitting}
+                rows={4}
+                placeholder={
+                  "https://www.kcl.re.kr/...\nhttps://ul.com/..."
+                }
+                style={{ width: "100%", padding: 8, fontFamily: "inherit" }}
+              />
+            </div>
+          )}
 
           <div className="section-title">
             <h2>예시 검토 시작</h2>

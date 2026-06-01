@@ -46,10 +46,20 @@ export function EvidencePreviewPanel({
               {view.candidates.map((c) => (
                 <li key={c.key}>
                   <b>{c.title}</b>
+                  {c.sourceType === "external_url" && (
+                    <span className="badge"> 외부</span>
+                  )}
                   <span className="muted">
                     {" "}
                     · {c.metaSummary} · 신뢰수준 {c.trustLevel} · {c.verificationStatus}
                   </span>
+                  {c.url && (
+                    <div className="muted">
+                      <a href={c.url} target="_blank" rel="noreferrer">
+                        {c.url}
+                      </a>
+                    </div>
+                  )}
                   <div className="muted">{c.snippet}</div>
                 </li>
               ))}

@@ -85,6 +85,8 @@ export type SessionRecord = {
   userPrompt: string;
   taskType: TaskType;
   evidenceMode: EvidenceMode;
+  /** Optional external source URLs (internal_docs_web side-car, docs/23). */
+  sourceUrls?: string[];
   status: SessionStatus;
   currentRound?: RoundKey;
   createdAt: number;

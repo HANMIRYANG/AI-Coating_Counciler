@@ -165,7 +165,11 @@ export function formatEvidenceContextBlock(ctx?: EvidenceContext): string {
   if (ctx.retrievalStatus === "ok") {
     const lines = ctx.candidates.map((c, i) => {
       const meta = formatEvidenceMetadata(c.metadata);
-      return `${i + 1}. [${c.filename} #${c.chunkIndex}] trust=${c.trustLevel}, verification=${c.verificationStatus}${meta}\n   스니펫: ${c.snippet}`;
+      const head =
+        c.sourceType === "external_url"
+          ? `[외부출처: ${c.filename}] (${c.url ?? ""})`
+          : `[${c.filename} #${c.chunkIndex}]`;
+      return `${i + 1}. ${head} trust=${c.trustLevel}, verification=${c.verificationStatus}${meta}\n   스니펫: ${c.snippet}`;
     });
     return [
       EVIDENCE_BLOCK_HEADER,

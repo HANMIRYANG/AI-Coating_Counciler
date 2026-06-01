@@ -17,6 +17,8 @@ export default function HomePage() {
   const [taskType, setTaskType] = useState<TaskType>(DEFAULT_TASK_TYPE);
   const [evidenceMode, setEvidenceMode] =
     useState<EvidenceMode>(DEFAULT_EVIDENCE_MODE);
+  // Raw textarea (one URL per line) for internal_docs_web external sources.
+  const [sourceUrlsText, setSourceUrlsText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,6 +36,15 @@ export default function HomePage() {
           prompt: trimmed,
           taskType,
           evidenceMode,
+          ...(evidenceMode === "internal_docs_web"
+            ? {
+                sourceUrls: sourceUrlsText
+                  .split(/\r?\n/)
+                  .map((s) => s.trim())
+                  .filter((s) => s.length > 0)
+                  .slice(0, 6),
+              }
+            : {}),
         }),
       });
       if (!res.ok) {
@@ -56,6 +67,8 @@ export default function HomePage() {
       setTaskType={setTaskType}
       evidenceMode={evidenceMode}
       setEvidenceMode={setEvidenceMode}
+      sourceUrlsText={sourceUrlsText}
+      setSourceUrlsText={setSourceUrlsText}
       onSubmit={startSession}
       submitting={submitting}
       error={error}
