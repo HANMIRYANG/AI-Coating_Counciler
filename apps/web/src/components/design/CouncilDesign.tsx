@@ -19,7 +19,7 @@ import type {
   ProviderOpinion,
   SynthesisResult,
 } from "@/lib/council/schemas";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Icons, AiAvatar, type IconName } from "./icons";
 import { EVIDENCE_SOURCE_DISPLAY_LABELS } from "@/lib/council/evidenceCatalog";
 import { useRecentSessions } from "@/lib/ui/useRecentSessions";
@@ -361,9 +361,18 @@ function Sidebar({
       count: sessions.length,
     },
     { id: "docs", label: "내부 기술자료 관리", icon: "Database" },
-    { id: "inbox", label: "업체 발송 답변 보관함", icon: "Inbox", count: 24 },
+    { id: "inbox", label: "업체 발송 답변 보관함", icon: "Inbox" },
     { id: "settings", label: "설정", icon: "Settings" },
   ];
+
+  // All nav targets are now live routes.
+  const NAV_HREF: Record<typeof active, string> = {
+    chat: "/",
+    history: "/history",
+    docs: "/documents",
+    inbox: "/archive",
+    settings: "/settings",
+  };
 
   return (
     <aside className="sb">
@@ -384,30 +393,16 @@ function Sidebar({
       <nav className="sb-nav" aria-label="주요 메뉴">
         {navItems.map((it) => {
           const Icon = Icons[it.icon];
-          const href =
-            it.id === "chat" ? "/" : it.id === "docs" ? "/documents" : null;
-          return href ? (
+          return (
             <Link
               key={it.id}
-              href={href}
+              href={NAV_HREF[it.id]}
               className={`sb-item ${active === it.id ? "is-active" : ""}`}
             >
               <Icon className="ico" />
               {it.label}
               {it.count != null && <span className="count">{it.count}</span>}
             </Link>
-          ) : (
-            <button
-              key={it.id}
-              type="button"
-              className={`sb-item ${active === it.id ? "is-active" : ""}`}
-              disabled
-              title="Phase 2에서 연결 예정"
-            >
-              <Icon className="ico" />
-              {it.label}
-              {it.count != null && <span className="count">{it.count}</span>}
-            </button>
           );
         })}
       </nav>
@@ -495,6 +490,8 @@ export function HomeWorkspace({
   const canSend = prompt.trim().length >= 4 && !submitting;
   const activeMode = TASK_MODES.find((m) => m.value === taskType);
   const activeEvidence = EVIDENCE_MODES.find((m) => m.value === evidenceMode);
+  const router = useRouter();
+  const [showGuide, setShowGuide] = useState(false);
 
   return (
     <AppShell
@@ -509,6 +506,11 @@ export function HomeWorkspace({
           inputDisabled={submitting}
           submitting={submitting}
           placeholder="질문을 입력하세요..."
+          chipHandlers={{
+            onAttach: () => router.push("/documents"),
+            onReference: () => setEvidenceMode("internal_docs"),
+            onGuide: () => setShowGuide((s) => !s),
+          }}
         />
       }
     >
@@ -525,6 +527,27 @@ export function HomeWorkspace({
               분리해 생성합니다.
             </p>
           </div>
+
+          {showGuide && (
+            <div className="evidence-readiness" role="note">
+              <b>사용 가이드</b>
+              <ul className="readiness-status" style={{ display: "block" }}>
+                <li>1. 질문 입력 후 검토 모드(taskType)를 선택합니다.</li>
+                <li>
+                  2. 사내 문서를 근거로 쓰려면 근거 모드 → “사내 자료 사용”을
+                  선택하세요. 문서는 “파일 첨부”(문서 관리)에서 업로드합니다.
+                </li>
+                <li>
+                  3. 전송하면 3개 AI가 독립 의견 → 상호 비판 → 최종 합성을 거쳐
+                  답변을 만듭니다.
+                </li>
+                <li>
+                  4. 결과 화면에서 업체 발송용/내부 메모를 분리해 확인하고,
+                  복사·메일·MD 내보내기를 사용합니다.
+                </li>
+              </ul>
+            </div>
+          )}
 
           <div className="section-title">
             <h2>검토 모드</h2>
@@ -1103,6 +1126,29 @@ function FinalAnswerCard({
     setTimeout(() => setCopied(false), 1400);
   };
 
+  // "메일 초안" → opens the mail client with the business-ready answer.
+  const mailDraftHref = `mailto:?subject=${encodeURIComponent(
+    "기술검토 답변 초안",
+  )}&body=${encodeURIComponent(answer.businessReadyAnswer)}`;
+
+  // "내부 검토 요청" → mail the internal memo + missing evidence to the team.
+  const reviewBody = [
+    "내부 검토 요청드립니다.",
+    "",
+    "[내부 메모]",
+    answer.internalMemo || "(없음)",
+    "",
+    "[누락 근거]",
+    ...(answer.missingEvidence.length > 0
+      ? answer.missingEvidence.map((m) => `- ${m}`)
+      : ["- 없음"]),
+    "",
+    `세션: ${sessionId}`,
+  ].join("\n");
+  const reviewRequestHref = `mailto:technical@hanmir.co.kr?subject=${encodeURIComponent(
+    "내부 검토 요청",
+  )}&body=${encodeURIComponent(reviewBody)}`;
+
   return (
     <div className="final-wrap fade-in">
       <div className="fitness-card">
@@ -1141,9 +1187,9 @@ function FinalAnswerCard({
           <button className="btn" type="button" onClick={copy}>
             <Icons.Copy /> {copied ? "복사됨" : "복사하기"}
           </button>
-          <button className="btn" type="button">
+          <a className="btn" href={mailDraftHref}>
             <Icons.Mail /> 메일 초안
-          </button>
+          </a>
           <a
             className="btn"
             href={`/api/council-sessions/${sessionId}/export?format=markdown`}
@@ -1151,12 +1197,16 @@ function FinalAnswerCard({
           >
             <Icons.Download /> MD 내보내기
           </a>
-          <button className="btn" type="button" disabled>
+          <button
+            className="btn"
+            type="button"
+            onClick={() => window.print()}
+          >
             <Icons.Download /> PDF 저장
           </button>
-          <button className="btn primary" type="button">
+          <a className="btn primary" href={reviewRequestHref}>
             <Icons.Users /> 내부 검토 요청
-          </button>
+          </a>
         </div>
       </div>
 
@@ -1464,6 +1514,7 @@ function Composer({
   inputDisabled,
   submitting,
   placeholder,
+  chipHandlers,
 }: {
   value: string;
   setValue: (value: string) => void;
@@ -1472,11 +1523,19 @@ function Composer({
   inputDisabled?: boolean;
   submitting?: boolean;
   placeholder: string;
+  // When provided, the footer chips become active. Omitted on the (disabled)
+  // session-screen composer so chips stay inert there.
+  chipHandlers?: {
+    onAttach: () => void;
+    onReference: () => void;
+    onGuide: () => void;
+  };
 }) {
   const send = () => {
     if (sendDisabled || submitting) return;
     onSend();
   };
+  const chipsDisabled = !chipHandlers || inputDisabled;
 
   return (
     <div className="composer-wrap">
@@ -1494,13 +1553,31 @@ function Composer({
           disabled={inputDisabled}
         />
         <div className="composer-actions">
-          <button className="composer-chip" type="button" disabled>
+          <button
+            className="composer-chip"
+            type="button"
+            disabled={chipsDisabled}
+            onClick={chipHandlers?.onAttach}
+            title="문서 업로드/관리로 이동"
+          >
             <Icons.Paperclip /> 파일 첨부
           </button>
-          <button className="composer-chip" type="button" disabled>
+          <button
+            className="composer-chip"
+            type="button"
+            disabled={chipsDisabled}
+            onClick={chipHandlers?.onReference}
+            title="근거 모드를 사내 자료 사용으로 설정"
+          >
             <Icons.Database /> 내부 자료 참조
           </button>
-          <button className="composer-chip" type="button" disabled>
+          <button
+            className="composer-chip"
+            type="button"
+            disabled={chipsDisabled}
+            onClick={chipHandlers?.onGuide}
+            title="사용 가이드 보기"
+          >
             <Icons.Sparkles /> AI 가이드
           </button>
           <button

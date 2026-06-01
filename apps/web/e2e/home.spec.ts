@@ -55,4 +55,20 @@ test.describe("home page smoke", () => {
     });
     await expect(externalBtn).toBeDisabled();
   });
+
+  test("'AI 가이드' chip toggles the usage guide", async ({ page }) => {
+    await expect(page.getByText("사용 가이드")).toHaveCount(0);
+    await page.getByRole("button", { name: "AI 가이드" }).click();
+    await expect(page.getByText("사용 가이드")).toBeVisible();
+  });
+
+  test("'내부 자료 참조' chip switches evidence mode to internal_docs", async ({
+    page,
+  }) => {
+    await page.getByRole("button", { name: "내부 자료 참조" }).click();
+    const group = page.getByRole("group", { name: "근거 모드 선택" });
+    await expect(
+      group.getByRole("button", { name: /사내 자료 사용/ }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
 });
