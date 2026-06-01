@@ -1,4 +1,4 @@
-# 14. Deployment — Vercel + Neon
+# 24. Deployment — Vercel + Neon
 
 이 문서는 현재 Next.js 앱(`apps/web`)을 **Vercel**(호스팅) + **Neon Postgres**(영속 DB)로
 배포하기 위한 준비 사항을 정리합니다. 문서 intake/search/evidence/export 동작은 그대로

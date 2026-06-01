@@ -1,10 +1,21 @@
 # 23. Ideation Mode + Evidence Source Strategy (Planning)
 
-> **Status:** Planning document. The typed foundation is now in code
-> (`apps/web/src/lib/council/evidence.ts`); fetchers / RAG / external
-> retrieval are still **not** implemented.
-> No web crawler, no real source fetcher, no orchestrator change. This
-> document defines product behavior and the contract that a future
+> **Status:** Partially implemented.
+> - **Ideation Mode (§1) — IMPLEMENTED.** `taskType=application_ideas` now
+>   produces the dedicated `IdeationFinalAnswer` shape (§1.4) through a distinct
+>   Round 3 synthesis branch, persisted and rendered separately. See
+>   `apps/web/src/lib/council/schemas.ts` (`IdeationFinalAnswerSchema`,
+>   `SynthesisResult`), `orchestrator.ts` (synthesis branch + ideation safety
+>   guard + ideation fallback), the provider adapters (`generateSynthesis`
+>   branch on `taskType`), `prismaSessionStore.ts` (`answerKind` / `ideation`
+>   columns), and the `IdeationAnswerCard` UI / ideation markdown export.
+> - **Evidence Source Strategy (§2+) — NOT implemented.** No web crawler, no
+>   real external/official source fetcher, no RAG / vector search, no verified
+>   citation enforcement. NOTE: the *internal* evidence preflight + prompt
+>   injection (Step 7/8) DO run inside the orchestrator already — so the older
+>   "no orchestrator change" wording no longer holds; only *external* source
+>   retrieval remains a future side-car.
+> This document defines product behavior and the contract a future
 > implementation must follow.
 >
 > **Foundation modules:**
@@ -66,10 +77,19 @@ Ideation Mode 는 다음과 같은 **선행 단계** 작업을 지원합니다.
 라우팅은 `apps/web/src/lib/council/orchestrator.ts` 의 round 입력 구성
 시 task type 별 prompt template 와 후처리 룰을 갈라 적용한다.
 
-### 1.4 Ideation 출력 구조 (제안)
+> **구현 상태:** 모든 taskType 의 **prompt-level 분기**는
+> `prompts.ts:taskTypeGuidance()` 로 구현되어 있다(8종 전부). 추가로
+> `application_ideas` 는 Round 3 synthesis 에서 전용 `IdeationFinalAnswer`
+> 스키마로 분기한다(구현됨). 그 외 taskType 의 출력 스키마는 공용
+> `FinalAnswer` 를 유지하며, 표(위)의 "출력 스키마" 차이는 현재 별도 스키마가
+> 아니라 prompt 가이던스 수준의 차이다(certification_checklist 의 체크리스트
+> 전용 스키마 등은 아직 미구현).
+
+### 1.4 Ideation 출력 구조 (구현됨)
 
 기존 `ProviderOpinion` 위에 obscure 하게 끼워넣지 말고, ideation 전용
-output 스키마를 두는 것을 권장한다.
+output 스키마를 둔다. 아래는 원래 제안 형태이며, 실제 구현은 이 위에 공용
+안전 표면을 추가했다(코드 블록 뒤 "구현된 스키마 차이" 참고).
 
 ```ts
 type IdeationItem = {
@@ -93,18 +113,36 @@ type IdeationFinalAnswer = {
 원칙:
 
 - `expectedBenefit` 은 시험성적서 표현이 아니라 "가능성 / 추정" 어조로 작성.
-- `doNotClaim` 은 safety guard 가 자동 채워준다. 예: `"100% 불연"`,
-  `"배터리 화재 방지"`, `"인증 완료"`.
+- `doNotClaim` 은 합성 AI(prompt)가 채운다. 안전 가드는 별도로 `finalMarkdown` /
+  `ideaSummary` / `doNotClaim` 텍스트를 스캔해 위험 표현을 `unsafePhrases` 로
+  자동 탐지하고 `riskLevel` 을 상향한다(`"100% 불연"`, `"배터리 화재 방지"`,
+  `"인증 완료"` 등).
 - `riskLevel` 은 항목별 + 전체 모두 계산한다.
+
+> **구현된 스키마 차이 (`IdeationFinalAnswerSchema`):** 위 제안 형태에 더해
+> (1) 판별자 `answerKind: "ideation"`, (2) 공용 도메인 안전 표면
+> (`unsafePhrases`, `recommendedSafeWording`, `missingEvidence`,
+> `confidenceScore`), (3) 렌더링/디스클레이머용 `conclusion` + `finalMarkdown`,
+> (4) Step 10 evidence-usage 필드 패리티(`evidenceUsed` / `coveredClaims` /
+> `uncoveredClaims` / `evidenceCoverageStatus`), (5) `providerSummary` /
+> `sessionStatus` 를 포함한다. CLAUDE.md 비협상 요구사항 #5(안전 필드 분리)와
+> `applySafetyGuard` 호환을 위해서다.
 
 ### 1.5 Round 별 동작 차이
 
-- **Round 1** Provider opinion 은 ideation 모드일 때 `IdeationItem[]`
-  배열을 생성하도록 prompt template 분기.
-- **Round 2** critique 는 단정 표현 / 시험 조건 누락만 보는 것이 아니라
-  "이 아이디어가 실제로 검증 가능한가" 도 확인한다.
-- **Round 3** synthesis 는 `IdeationFinalAnswer` 를 생성하고, 안전
-  가드 (`detectUnsafePhrases`, `computeRiskLevel`) 를 그대로 통과시킨다.
+- **Round 1 / Round 2 (현재 구현):** 출력 **스키마는 변경하지 않는다**
+  (`ProviderOpinion` / `ProviderCritique` 공용 유지). ideation 모드의 행동
+  차이는 `prompts.ts:taskTypeGuidance("application_ideas")` 가이던스로만
+  주입한다. 즉 Round 1 이 `IdeationItem[]` 를 직접 만들지는 않는다(원안 대비
+  축소된 형태로 구현).
+- **Round 3 synthesis (구현됨):** `taskType === "application_ideas"` 이면
+  `buildIdeationSynthesisMessages` + `IdeationFinalAnswerSchema` 로 분기해
+  `IdeationFinalAnswer` 를 생성한다. 이후 `applyIdeationSafetyGuard` 가 안전
+  가드(`detectUnsafePhrases`, `computeRiskLevel`)를 그대로 통과시키고
+  디스클레이머를 `finalMarkdown` 에 부착한다. 합성 실패 시 `fallbackIdeation`
+  이 결정론적 ideation 답변을 만든다.
+- **향후(미구현):** Round 1 단계에서 `IdeationItem[]` 전용 출력으로 분기하려면
+  Round 1/2 스키마 분기가 추가로 필요하다.
 
 ---
 
@@ -323,9 +361,9 @@ Round 3: Final Synthesis
 
 > **현재 상태:** home 페이지의 taskType selector 가 이미 노출되어 있으며
 > 위 표의 **8종 모두**를 chip 형태로 선택할 수 있다 (`apps/web/src/components/design/CouncilDesign.tsx: TASK_MODES`).
-> Phase 2 추가 작업은 selector 재도입이 아니라 (a) `application_ideas`
-> 전용 출력 스키마 (§1.4 `IdeationFinalAnswer`) 와 (b) evidenceMode selector
-> 활성화 (RAG 연결 후) 두 가지이다.
+> (a) `application_ideas` 전용 출력 스키마(§1.4 `IdeationFinalAnswer`)는
+> **구현 완료**. 남은 작업은 (b) evidenceMode selector 활성화(RAG 연결 후)이며,
+> home 페이지는 아직 `ai_only` 로 고정 송신한다(`app/page.tsx`).
 
 ### 6.2 evidence mode selector
 
@@ -356,6 +394,12 @@ Round 3: Final Synthesis
 - `lib/council/models.ts` — model policy / fallback chain / preview/experimental/latest 차단.
 - `lib/council/safety.ts` — 위험 표현 탐지 / riskLevel 계산.
 - Codex 가 도입한 Claude Design 통합 컴포넌트 (`components/design/*`).
+
+> **참고(Ideation 구현):** Ideation 합성 분기는 orchestrator 의 synthesis 단계에
+> **additive** 로 추가되었으며 위 deadline/partial/attempt-log 불변식과
+> `safety.ts` 를 변경하지 않는다(안전 가드는 재사용). UI 는 `IdeationAnswerCard`
+> 를 `components/design/CouncilDesign.tsx` 에 additive 로 더했다. 외부 evidence
+> 단계는 여전히 미구현 사이드카로 남아 있으며 라운드를 중단시키지 않는다.
 
 외부 evidence 단계는 위 모듈들 **앞단** 의 사이드카로 추가되며, 실패가
 회의를 중단시켜서는 안 된다.

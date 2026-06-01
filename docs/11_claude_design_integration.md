@@ -76,28 +76,46 @@ Claude Design 산출물은 /design/claude-design-export/ 에 있습니다.
 
 ---
 
-## 현재 구현 상태 (2026-05-28)
+## 현재 구현 상태 (2026-06-01)
 
-기능 우선 UI 가 먼저 들어가 있고, Claude Design 기준 리팩토링은 **Phase 1.5** 로 보류 중입니다. 권장 컴포넌트 ↔ 현재 위치 매핑:
+**실제 라우트는 이미 Claude Design 기반 UI(`components/design/CouncilDesign.tsx`)
+를 사용합니다.** 즉 이전 문서가 언급한 "Phase 1.5 라우트 전환"은 사실상 완료된
+상태입니다.
 
-| 권장 (이 문서) | 현재 구현 위치 | 비고 |
+- `/` → `HomeWorkspace` (`components/design/CouncilDesign.tsx`), `app/page.tsx` 에서 import.
+- `/sessions/[id]` → `SessionWorkspace` (동일 파일), `app/sessions/[id]/page.tsx` 에서 import.
+
+`CouncilDesign.tsx` 는 opinion/critique/final 카드를 **파일 내부에**
+재구현(`AiOpinionCard`, `SynthCard`, `FinalAnswerCard`, `IdeationAnswerCard`)하고,
+공용 패널은 `components/council/*` 에서 가져와 조합합니다.
+
+권장 컴포넌트 ↔ 현재 구현 매핑:
+
+| 권장 (이 문서) | 현재 구현 | 비고 |
 |---|---|---|
-| `CouncilChatLayout.tsx` | `apps/web/src/app/page.tsx` | 입력 폼 + 라우팅이 page 컴포넌트에 인라인. 리팩토링 시 분리. |
-| `RoundProgressTimeline.tsx` | `apps/web/src/components/council/RoundTimeline.tsx` | 위치만 `components/design/` 로 이동 + 디자인 적용 필요. |
-| `ProviderOpinionCard.tsx` | `apps/web/src/components/council/ProviderCard.tsx` | 동일. |
-| `CritiqueCard.tsx` | `apps/web/src/components/council/CritiquePanel.tsx` | 동일. |
-| `FinalAnswerPanel.tsx` | `apps/web/src/components/council/FinalAnswerPanel.tsx` | 동일. |
-| `EvidencePanel.tsx` | (미구현) | `evidenceBackedClaims` / `missingEvidence` 가 `FinalAnswerPanel` 내 인라인. 분리는 Phase 2. |
-| `RiskPhrasePanel.tsx` | `FinalAnswerPanel.tsx` 내 인라인 | `unsafePhrases` / `recommendedSafeWording` 표시. 별도 패널 분리는 Phase 2. |
+| `CouncilChatLayout.tsx` | `CouncilDesign.tsx: HomeWorkspace` | 입력 폼 + 라우팅. `app/page.tsx` 는 얇은 래퍼. |
+| `RoundProgressTimeline.tsx` | `CouncilDesign.tsx: StepperCard` | 디자인 컴포넌트 내부에 구현. |
+| `ProviderOpinionCard.tsx` | `CouncilDesign.tsx: AiOpinionCard` | 동일. |
+| `CritiqueCard.tsx` | `CouncilDesign.tsx: SynthCard` | 동일. |
+| `FinalAnswerPanel.tsx` | `CouncilDesign.tsx: FinalAnswerCard` (+ ideation 시 `IdeationAnswerCard`) | `answerKind` 로 분기(docs/23). |
+| `EvidencePanel.tsx` | `components/council/EvidencePanel.tsx` (별도 파일 — 구현됨) | `CouncilDesign` 이 import 해 사용. |
+| `RiskPhrasePanel.tsx` | `components/council/RiskPhrasePanel.tsx` (별도 파일 — 구현됨) | `CouncilDesign` 이 import 해 사용. |
+
+`CouncilDesign` 이 함께 사용하는 공용 패널: `EvidencePanel`, `RiskPhrasePanel`,
+`EvidencePreviewPanel`, `FinalEvidenceCoveragePanel` (모두 `components/council/`).
+
+### 레거시(현재 라우트 미사용) 컴포넌트
+
+기능 우선 UI 시절의 `components/council/{RoundTimeline,ProviderCard,CritiquePanel,FinalAnswerPanel}.tsx`
+는 현재 라우트에서 import 되지 않습니다(디자인 컴포넌트가 in-file 카드로 대체).
+정리(삭제 또는 보관) 후보입니다.
 
 ### 현재 `components/design/` 의 파일
 
 ```text
 components/design/icons.tsx         # 공통 아이콘 세트
-components/design/CouncilDesign.tsx # Claude Design export 기반 프로토타입 (전체 화면)
+components/design/CouncilDesign.tsx # 실제 라우트가 사용하는 Claude Design 기반 워크스페이스
 ```
-
-`CouncilDesign.tsx` 는 디자인 export 를 React로 1차 옮긴 컴포넌트입니다. 실제 라우트(`/`, `/sessions/[id]`) 는 아직 `components/council/*` 를 사용합니다. Phase 1.5 에서 `components/design/` 로 통일 + 라우트 전환.
 
 ### Claude Design export 위치
 
