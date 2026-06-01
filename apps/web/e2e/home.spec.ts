@@ -37,4 +37,22 @@ test.describe("home page smoke", () => {
     await ideationBtn.click();
     await expect(ideationBtn).toHaveAttribute("aria-pressed", "true");
   });
+
+  test("evidence mode group is selectable; external lookup is disabled", async ({
+    page,
+  }) => {
+    const group = page.getByRole("group", { name: "근거 모드 선택" });
+    await expect(group).toBeVisible();
+
+    const internalBtn = group.getByRole("button", { name: /사내 자료 사용/ });
+    await internalBtn.click();
+    await expect(internalBtn).toHaveAttribute("aria-pressed", "true");
+
+    // internal_docs_web (external official-source lookup) is offered but not
+    // wired yet → disabled "준비 중".
+    const externalBtn = group.getByRole("button", {
+      name: /사내 자료 \+ 공식 출처/,
+    });
+    await expect(externalBtn).toBeDisabled();
+  });
 });

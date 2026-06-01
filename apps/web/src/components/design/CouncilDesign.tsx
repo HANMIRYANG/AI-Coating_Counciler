@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type {
+  EvidenceMode,
   ProviderId,
   ProviderStatus,
   RoundKey,
@@ -243,6 +244,33 @@ const TASK_MODES: Array<{ value: TaskType; label: string; hint: string }> = [
   },
 ];
 
+// Evidence mode selector (docs/23 §6.2). ai_only + internal_docs are live;
+// internal_docs_web (external official-source lookup) is not wired yet and is
+// offered as a disabled "준비 중" option so the UI stays honest.
+const EVIDENCE_MODES: Array<{
+  value: EvidenceMode;
+  label: string;
+  hint: string;
+  disabled?: boolean;
+}> = [
+  {
+    value: "ai_only",
+    label: "AI만 사용",
+    hint: "업로드 자료 없이 AI 지식만으로 검토합니다.",
+  },
+  {
+    value: "internal_docs",
+    label: "사내 자료 사용",
+    hint: "업로드된 사내 문서를 키워드 검색해 근거 후보로 제공합니다 (DB 필요).",
+  },
+  {
+    value: "internal_docs_web",
+    label: "사내 자료 + 공식 출처",
+    hint: "외부 공식 출처 조회는 아직 연결되지 않았습니다 (준비 중).",
+    disabled: true,
+  },
+];
+
 const STATUS_TEXT: Record<ProviderStatus, string> = {
   pending: "대기",
   running: "작성 중",
@@ -331,7 +359,7 @@ function Sidebar({
       icon: "History",
       count: sessions.length,
     },
-    { id: "docs", label: "내부 기술자료 관리", icon: "Database", count: 8 },
+    { id: "docs", label: "내부 기술자료 관리", icon: "Database" },
     { id: "inbox", label: "업체 발송 답변 보관함", icon: "Inbox", count: 24 },
     { id: "settings", label: "설정", icon: "Settings" },
   ];
@@ -355,11 +383,12 @@ function Sidebar({
       <nav className="sb-nav" aria-label="주요 메뉴">
         {navItems.map((it) => {
           const Icon = Icons[it.icon];
-          const enabled = it.id === "chat";
-          return enabled ? (
+          const href =
+            it.id === "chat" ? "/" : it.id === "docs" ? "/documents" : null;
+          return href ? (
             <Link
               key={it.id}
-              href="/"
+              href={href}
               className={`sb-item ${active === it.id ? "is-active" : ""}`}
             >
               <Icon className="ico" />
@@ -446,6 +475,8 @@ export function HomeWorkspace({
   setPrompt,
   taskType,
   setTaskType,
+  evidenceMode,
+  setEvidenceMode,
   onSubmit,
   submitting,
   error,
@@ -454,12 +485,15 @@ export function HomeWorkspace({
   setPrompt: (value: string) => void;
   taskType: TaskType;
   setTaskType: (value: TaskType) => void;
+  evidenceMode: EvidenceMode;
+  setEvidenceMode: (value: EvidenceMode) => void;
   onSubmit: () => void;
   submitting: boolean;
   error: string | null;
 }) {
   const canSend = prompt.trim().length >= 4 && !submitting;
   const activeMode = TASK_MODES.find((m) => m.value === taskType);
+  const activeEvidence = EVIDENCE_MODES.find((m) => m.value === evidenceMode);
 
   return (
     <AppShell
@@ -521,6 +555,36 @@ export function HomeWorkspace({
           </div>
 
           <div className="section-title">
+            <h2>근거 모드</h2>
+            <span className="sub">
+              {activeEvidence ? activeEvidence.hint : "근거 모드를 선택하세요"}
+            </span>
+          </div>
+          <div
+            className="task-modes"
+            role="group"
+            aria-label="근거 모드 선택"
+          >
+            {EVIDENCE_MODES.map((m) => {
+              const isActive = m.value === evidenceMode;
+              return (
+                <button
+                  key={m.value}
+                  type="button"
+                  aria-pressed={isActive}
+                  className={`task-mode${isActive ? " is-active" : ""}`}
+                  onClick={() => setEvidenceMode(m.value)}
+                  disabled={submitting || m.disabled}
+                  title={m.hint}
+                >
+                  {m.label}
+                  {m.disabled ? " · 준비 중" : ""}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="section-title">
             <h2>예시 검토 시작</h2>
             <span className="sub">자주 묻는 업체 문의 유형</span>
           </div>
@@ -569,8 +633,8 @@ export function HomeWorkspace({
                 <span className="readiness-badge">준비 중</span>
               </li>
               <li>
-                <b>사내 문서 / RAG</b>
-                <span className="readiness-badge">준비 중</span>
+                <b>사내 문서 / RAG (키워드)</b>
+                <span className="readiness-badge">사용 가능</span>
               </li>
             </ul>
             <div className="readiness-sources">

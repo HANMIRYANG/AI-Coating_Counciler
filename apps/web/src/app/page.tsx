@@ -6,14 +6,17 @@ import { HomeWorkspace } from "@/components/design/CouncilDesign";
 import type { EvidenceMode, TaskType } from "@/lib/council/types";
 
 const DEFAULT_TASK_TYPE: TaskType = "technical_review";
-// evidenceMode stays ai_only for this slice. internal_docs and
-// internal_docs_web are Phase 2 (RAG / external sources not implemented yet).
+// internal_docs is now user-selectable (keyword RAG over uploaded internal
+// docs). internal_docs_web (external official-source lookup) is not wired yet
+// and is offered as a disabled "준비 중" option in the selector.
 const DEFAULT_EVIDENCE_MODE: EvidenceMode = "ai_only";
 
 export default function HomePage() {
   const router = useRouter();
   const [prompt, setPrompt] = useState("");
   const [taskType, setTaskType] = useState<TaskType>(DEFAULT_TASK_TYPE);
+  const [evidenceMode, setEvidenceMode] =
+    useState<EvidenceMode>(DEFAULT_EVIDENCE_MODE);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,7 +33,7 @@ export default function HomePage() {
         body: JSON.stringify({
           prompt: trimmed,
           taskType,
-          evidenceMode: DEFAULT_EVIDENCE_MODE,
+          evidenceMode,
         }),
       });
       if (!res.ok) {
@@ -51,6 +54,8 @@ export default function HomePage() {
       setPrompt={setPrompt}
       taskType={taskType}
       setTaskType={setTaskType}
+      evidenceMode={evidenceMode}
+      setEvidenceMode={setEvidenceMode}
       onSubmit={startSession}
       submitting={submitting}
       error={error}
