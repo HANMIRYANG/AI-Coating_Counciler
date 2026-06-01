@@ -92,6 +92,12 @@ export default function DocumentsPage() {
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
 
+  // ── PDF/DOCX 파싱 업로드 ───────────────────────────────────
+  const [file, setFile] = useState<File | null>(null);
+  const [parsing, setParsing] = useState(false);
+  const [parseMsg, setParseMsg] = useState<string | null>(null);
+  const [parseErr, setParseErr] = useState<string | null>(null);
+
   // ── 목록 ───────────────────────────────────────────────────
   const [docs, setDocs] = useState<DocSummary[]>([]);
   const [listErr, setListErr] = useState<string | null>(null);
@@ -162,6 +168,43 @@ export default function DocumentsPage() {
       setUploadErr(errMessage(e));
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function submitParse() {
+    if (parsing) return;
+    setParseErr(null);
+    setParseMsg(null);
+    if (!file) {
+      setParseErr("PDF 또는 DOCX 파일을 선택하세요.");
+      return;
+    }
+    setParsing(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const cleanedMeta = pruneMeta(meta);
+      if (Object.keys(cleanedMeta).length > 0) {
+        fd.append("metadata", JSON.stringify(cleanedMeta));
+      }
+      const res = await fetch("/api/documents/parse", {
+        method: "POST",
+        body: fd,
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.message ?? json?.error ?? `HTTP ${res.status}`);
+      }
+      setParseMsg(
+        `추출 완료 — ${json.kind?.toUpperCase() ?? ""} · 청크 ${json.chunkCount ?? "?"}개 · ${json.extractedChars ?? "?"}자` +
+          (json.pageCount ? ` · ${json.pageCount}p` : ""),
+      );
+      setFile(null);
+      await loadList();
+    } catch (e) {
+      setParseErr(errMessage(e));
+    } finally {
+      setParsing(false);
     }
   }
 
@@ -329,7 +372,7 @@ export default function DocumentsPage() {
 
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <button className="btn primary" type="submit" disabled={uploading}>
-                {uploading ? "업로드 중..." : "업로드"}
+                {uploading ? "업로드 중..." : "텍스트 업로드"}
               </button>
               {uploadMsg && (
                 <span style={{ color: "var(--ok, #2a7)" }}>{uploadMsg}</span>
@@ -338,6 +381,45 @@ export default function DocumentsPage() {
             {uploadErr && (
               <div className="form-error" role="alert">
                 업로드 실패: {uploadErr}
+              </div>
+            )}
+
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                flexWrap: "wrap",
+                borderTop: "1px solid var(--line, #ddd)",
+                paddingTop: 10,
+              }}
+            >
+              <span className="muted">또는 PDF/DOCX 자동 추출:</span>
+              <input
+                type="file"
+                accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                disabled={parsing}
+              />
+              <button
+                className="btn"
+                type="button"
+                onClick={submitParse}
+                disabled={parsing || !file}
+              >
+                {parsing ? "추출 중..." : "파일 추출 업로드"}
+              </button>
+              {parseMsg && (
+                <span style={{ color: "var(--ok, #2a7)" }}>{parseMsg}</span>
+              )}
+            </div>
+            <p className="readiness-note">
+              PDF/DOCX는 서버에서 텍스트 레이어만 추출합니다(OCR 미지원).
+              위 메타데이터는 두 방식 모두에 적용됩니다.
+            </p>
+            {parseErr && (
+              <div className="form-error" role="alert">
+                추출 실패: {parseErr}
               </div>
             )}
           </form>
