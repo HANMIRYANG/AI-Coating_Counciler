@@ -162,12 +162,15 @@ model FinalAnswer {
   uncoveredClaims          Json?
   evidenceCoverageStatus   String?
 
-  // Synthesis output kind discriminator (docs/23). "standard" technical-review
-  // answers use the columns above; "ideation" (taskType=application_ideas)
-  // stores its full IdeationFinalAnswer payload in `ideation` while the shared
-  // safety columns above stay populated.
+  // Synthesis output kind discriminator (docs/23). "standard" answers use the
+  // dedicated columns above. Non-standard kinds ("ideation",
+  // "certification_checklist", …) persist their FULL payload in the generic
+  // `payload` column while the shared safety columns above stay populated.
+  // `ideation` is the legacy column kept only for backward-compatible reads of
+  // rows written before `payload` existed.
   answerKind               String   @default("standard")
   ideation                 Json?
+  payload                  Json?
 
   createdAt                DateTime @default(now())
 

@@ -14,6 +14,7 @@ import type {
   SynthesisInput,
 } from "../types";
 import {
+  CertificationChecklistFinalAnswerSchema,
   FinalAnswerSchema,
   IdeationFinalAnswerSchema,
   ProviderCritiqueSchema,
@@ -23,6 +24,7 @@ import {
   type SynthesisResult,
 } from "../schemas";
 import {
+  buildChecklistSynthesisMessages,
   buildCritiqueMessages,
   buildIdeationSynthesisMessages,
   buildInitialOpinionMessages,
@@ -118,6 +120,18 @@ export class AnthropicProviderAdapter implements AiProviderAdapter {
       );
       const { raw, parsed } = await this.messageJson(system, user, options);
       return validateOrThrow(IdeationFinalAnswerSchema, parsed, raw);
+    }
+    if (input.taskType === "certification_checklist") {
+      const { system, user } = buildChecklistSynthesisMessages(
+        this.displayName,
+        input,
+      );
+      const { raw, parsed } = await this.messageJson(system, user, options);
+      return validateOrThrow(
+        CertificationChecklistFinalAnswerSchema,
+        parsed,
+        raw,
+      );
     }
     const { system, user } = buildSynthesisMessages(this.displayName, input);
     const { raw, parsed } = await this.messageJson(system, user, options);

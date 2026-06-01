@@ -23,6 +23,8 @@ import type { AiProviderAdapter } from "./provider";
 import type { ProviderRegistry } from "./providers";
 import { PROVIDER_IDS } from "./providers";
 import {
+  type CertificationChecklistFinalAnswer,
+  CertificationChecklistFinalAnswerSchema,
   type FinalAnswer,
   FinalAnswerSchema,
   type IdeationFinalAnswer,
@@ -807,6 +809,9 @@ export class CouncilOrchestrator {
     if (ans.answerKind === "ideation") {
       return this.applyIdeationSafetyGuard(ans, opinionCount, critiqueCount);
     }
+    if (ans.answerKind === "certification_checklist") {
+      return this.applyChecklistSafetyGuard(ans, opinionCount, critiqueCount);
+    }
 
     const finalText = [
       ans.conclusion,
@@ -942,12 +947,75 @@ export class CouncilOrchestrator {
     });
   }
 
+  // Certification-checklist safety guard. Mirrors the ideation guard but scans
+  // the checklist item text (requirement / evidence / gap) so unsafe assertions
+  // (e.g. claiming an unmet cert is "보유") still surface.
+  private applyChecklistSafetyGuard(
+    ans: CertificationChecklistFinalAnswer,
+    opinionCount: number,
+    critiqueCount: number,
+  ): CertificationChecklistFinalAnswer {
+    const itemText = ans.items
+      .map((i) => [i.requirement, i.evidence, i.gap].join(" "))
+      .join("\n");
+    const finalText = [ans.conclusion, ans.finalMarkdown, itemText].join(
+      "\n\n",
+    );
+    const detected = detectUnsafePhrases(finalText);
+
+    const mergedUnsafe = dedupUnsafePhrases([
+      ...ans.unsafePhrases,
+      ...detected.map((d) => ({
+        phrase: d.phrase,
+        reason: "도메인 안전성 정책에 따라 자동 탐지됨",
+        recommended: d.recommended,
+      })),
+    ]);
+
+    const mergedSafeWording = dedupStrings([
+      ...ans.recommendedSafeWording,
+      ...collectRecommendedWordings(detected),
+    ]);
+
+    const risk = computeRiskLevel({
+      unsafePhrases: detected,
+      missingEvidence: ans.missingEvidence,
+      taskType: "",
+      text: finalText,
+    });
+
+    let finalMarkdown = ans.finalMarkdown;
+    if (critiqueCount === 0) {
+      const critiqueWarning =
+        "[경고] Round 2 상호비판이 수행되지 못했고, 본 체크리스트는 Round 1 의견만을 기반으로 작성되었습니다. 외부 활용 전 반드시 추가 검토가 필요합니다.";
+      finalMarkdown = `${critiqueWarning}\n\n${finalMarkdown}`;
+    }
+    if (opinionCount <= 1) {
+      const limitedWarning =
+        "[제한적 검토 안내] 본 체크리스트는 일부 AI만 응답하여 제한적 검토 결과입니다. 외부 활용 전 추가 검토가 필요합니다.";
+      finalMarkdown = `${limitedWarning}\n\n${finalMarkdown}`;
+    }
+    finalMarkdown = `${finalMarkdown}\n\n---\n_${FINAL_ANSWER_DISCLAIMER_KO}_`;
+
+    return CertificationChecklistFinalAnswerSchema.parse({
+      ...ans,
+      unsafePhrases: mergedUnsafe,
+      recommendedSafeWording: mergedSafeWording,
+      riskLevel:
+        priorityRiskLevel(ans.riskLevel, risk) ?? ans.riskLevel ?? "medium",
+      finalMarkdown,
+    });
+  }
+
   private fallbackSynthesis(
     input: SynthesisInput,
     opinionCount: number,
   ): SynthesisResult {
     if (input.taskType === "application_ideas") {
       return this.fallbackIdeation(input, opinionCount);
+    }
+    if (input.taskType === "certification_checklist") {
+      return this.fallbackChecklist(input, opinionCount);
     }
 
     const evidence = input.opinions.flatMap((o) => o.evidenceBackedClaims);
@@ -1037,6 +1105,56 @@ export class CouncilOrchestrator {
         ``,
         `### 종합 의견`,
         ...input.opinions.map((o) => `- [${o.providerId}] ${o.summary}`),
+      ].join("\n"),
+      missingEvidence: missing,
+      unsafePhrases: [],
+      recommendedSafeWording: [],
+      riskLevel: "high",
+      confidenceScore: 0.3,
+      providerSummary: input.opinions.map((o) => ({
+        providerId: o.providerId,
+        status: "succeeded",
+      })),
+      sessionStatus: "fallback_summary",
+    });
+  }
+
+  // Deterministic checklist fallback when AI synthesis fails for a
+  // certification_checklist session. Derives an "all unknown" checklist from
+  // the aggregated missing-evidence so the answer still carries the safety
+  // surface and never claims a cert is held.
+  private fallbackChecklist(
+    input: SynthesisInput,
+    opinionCount: number,
+  ): CertificationChecklistFinalAnswer {
+    const missing = Array.from(
+      new Set([
+        ...input.opinions.flatMap((o) => o.missingEvidence),
+        ...input.critiques.flatMap((c) => c.missingEvidenceFound),
+      ]),
+    );
+    const conclusion =
+      opinionCount === 0
+        ? "AI 검토가 모두 실패하여 체크리스트를 생성할 수 없습니다. 추가 검토가 필요합니다."
+        : "AI 합성 단계가 실패하여 Round 1 의견 기반의 결정론적 체크리스트를 제공합니다. 모든 항목은 인증기관 확인이 필요합니다.";
+
+    return CertificationChecklistFinalAnswerSchema.parse({
+      items: missing.slice(0, 10).map((m) => ({
+        requirement: m,
+        category: "확인 필요",
+        status: "unknown",
+        evidence: "",
+        gap: "시험성적서/인증서 확보 또는 인증기관 확인 필요",
+        issuingBody: "",
+      })),
+      metRequirements: [],
+      unmetRequirements: missing,
+      conclusion,
+      finalMarkdown: [
+        `## (Fallback) 인증/규격 체크리스트`,
+        conclusion,
+        ``,
+        ...missing.map((m) => `- [ ] ${m} — 확인 필요`),
       ].join("\n"),
       missingEvidence: missing,
       unsafePhrases: [],

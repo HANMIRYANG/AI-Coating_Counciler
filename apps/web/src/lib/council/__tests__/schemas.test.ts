@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  CertificationChecklistFinalAnswerSchema,
   CreateSessionRequestSchema,
   FinalAnswerSchema,
   IdeationFinalAnswerSchema,
@@ -113,6 +114,34 @@ describe("Zod schema validation", () => {
       ideas: [{ ideaSummary: "" }],
     });
     expect(r.success).toBe(false);
+  });
+
+  it("CertificationChecklistFinalAnswerSchema parses minimal input with defaults", () => {
+    const r = CertificationChecklistFinalAnswerSchema.safeParse({
+      items: [{ requirement: "UL 94 V-0 난연 등급" }],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.answerKind).toBe("certification_checklist");
+      expect(r.data.items[0].status).toBe("unknown");
+      expect(r.data.items[0].category).toBe("");
+      // Shared safety surface defaults present.
+      expect(r.data.unsafePhrases).toEqual([]);
+      expect(r.data.evidenceCoverageStatus).toBe("not_requested");
+    }
+  });
+
+  it("ChecklistItem requires a non-empty requirement and a valid status", () => {
+    expect(
+      CertificationChecklistFinalAnswerSchema.safeParse({
+        items: [{ requirement: "" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      CertificationChecklistFinalAnswerSchema.safeParse({
+        items: [{ requirement: "x", status: "maybe" }],
+      }).success,
+    ).toBe(false);
   });
 
   it("CreateSessionRequestSchema requires a non-empty prompt + valid taskType", () => {

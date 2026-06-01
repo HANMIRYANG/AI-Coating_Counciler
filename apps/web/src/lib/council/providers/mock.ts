@@ -18,8 +18,10 @@ import type {
   SynthesisInput,
 } from "../types";
 import {
+  CertificationChecklistFinalAnswerSchema,
   FinalAnswerSchema,
   IdeationFinalAnswerSchema,
+  type CertificationChecklistFinalAnswer,
   type FinalAnswer,
   type IdeationFinalAnswer,
   type ProviderCritique,
@@ -199,9 +201,10 @@ export class MockProviderAdapter implements AiProviderAdapter {
     const model = this.resolveModel(options);
     this.callsByRound.synthesis.push({ model });
     await this.applyDelay(options, this.cfg.synthesisFailureMode);
-    return input.taskType === "application_ideas"
-      ? buildMockIdeation(input)
-      : buildMockSynthesis(this.id, input);
+    if (input.taskType === "application_ideas") return buildMockIdeation(input);
+    if (input.taskType === "certification_checklist")
+      return buildMockChecklist(input);
+    return buildMockSynthesis(this.id, input);
   }
 }
 
@@ -451,6 +454,75 @@ function buildMockIdeation(input: SynthesisInput): IdeationFinalAnswer {
     recommendedSafeWording: [
       "‘화재 방지’ → ‘특정 시험 조건에서 표면 보호/방열 보조 가능성’",
       "‘인증 완료’ → ‘인증기관 확인 필요’",
+    ],
+    riskLevel: "high",
+    confidenceScore: 0.5,
+    providerSummary: input.opinions.map((o) => ({
+      providerId: o.providerId,
+      status: "succeeded",
+    })),
+    sessionStatus: opinionCount === 3 ? "completed" : "partial_completed",
+  });
+}
+
+function buildMockChecklist(
+  input: SynthesisInput,
+): CertificationChecklistFinalAnswer {
+  const opinionCount = input.opinions.length;
+  const conclusion =
+    "해당 적용 분야에 필요한 인증/규격/시험 체크리스트입니다. 미충족·미확인 항목은 인증기관 확인 및 시험성적서 확보가 필요합니다.";
+
+  return CertificationChecklistFinalAnswerSchema.parse({
+    items: [
+      {
+        requirement: "UL 94 난연 등급 (V-0 등)",
+        category: "시험",
+        status: "unknown",
+        evidence: "",
+        gap: "대상 기재/두께 조건의 난연 시험성적서 확보 필요",
+        issuingBody: "공인 시험기관",
+      },
+      {
+        requirement: "KS F 2271 가스 유해성 / 내화 시험",
+        category: "규격",
+        status: "unknown",
+        evidence: "",
+        gap: "적용 조건 기준 시험 결과 확인 필요",
+        issuingBody: "KCL/KTR 등",
+      },
+      {
+        requirement: "SDS/MSDS 화학 안전 자료",
+        category: "인증",
+        status: "unmet",
+        evidence: "",
+        gap: "최신 SDS 발급/갱신 필요",
+        issuingBody: "제조사/시험기관",
+      },
+    ],
+    metRequirements: [],
+    unmetRequirements: [
+      "난연 시험성적서",
+      "KS F 2271 시험 결과",
+      "최신 SDS",
+    ],
+    conclusion,
+    finalMarkdown: [
+      `## 인증/규격 체크리스트`,
+      conclusion,
+      ``,
+      `- [ ] UL 94 난연 등급 — 확인 필요`,
+      `- [ ] KS F 2271 — 확인 필요`,
+      `- [ ] SDS/MSDS — 미충족`,
+    ].join("\n"),
+    missingEvidence: [
+      "난연 시험성적서(기재/두께 조건)",
+      "KS F 2271 시험 결과",
+      "최신 SDS",
+    ],
+    unsafePhrases: [],
+    recommendedSafeWording: [
+      "‘인증 완료’ → ‘인증기관 확인 필요’",
+      "‘난연 보장’ → ‘특정 시험 조건에서 화염 확산 지연 가능성’",
     ],
     riskLevel: "high",
     confidenceScore: 0.5,

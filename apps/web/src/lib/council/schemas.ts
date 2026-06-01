@@ -214,11 +214,72 @@ export const IdeationFinalAnswerSchema = z.object({
 });
 export type IdeationFinalAnswer = z.infer<typeof IdeationFinalAnswerSchema>;
 
-// Discriminated (by `answerKind`) union of the two synthesis output shapes.
-// Branch at runtime with `result.answerKind === "ideation"`. Each provider
-// parses with the concrete schema for its taskType, so this stays a TS-level
-// union (avoids ZodDefault-on-discriminator pitfalls of z.discriminatedUnion).
-export type SynthesisResult = FinalAnswer | IdeationFinalAnswer;
+// ── Certification checklist output (docs/23) ──────────────────────────
+// taskType=certification_checklist produces a structured checklist of the
+// certifications / standards / tests required for an application, each marked
+// met / unmet / unknown — a genuinely different shape from prose FinalAnswer.
+//
+// As with ideation, it carries the shared domain-safety surface (CLAUDE.md #5)
+// so the safety guard runs and the risk / missing-evidence panels stay
+// populated. Unmet/unknown items must never be described as "보유/확보됨".
+
+export const ChecklistItemStatusSchema = z.enum(["met", "unmet", "unknown"]);
+export type ChecklistItemStatus = z.infer<typeof ChecklistItemStatusSchema>;
+
+export const ChecklistItemSchema = z.object({
+  requirement: z.string().min(1), // 규격/인증/시험 항목명
+  category: z.string().default(""), // 예: 인증 / 시험 / 규격 / 사용환경
+  status: ChecklistItemStatusSchema.default("unknown"),
+  evidence: z.string().default(""), // 충족 근거(보유 성적서/인증 등)
+  gap: z.string().default(""), // 미충족 시 추가로 필요한 것
+  issuingBody: z.string().default(""), // 발급/확인 기관
+});
+export type ChecklistItem = z.infer<typeof ChecklistItemSchema>;
+
+export const CertificationChecklistFinalAnswerSchema = z.object({
+  answerKind: z.literal("certification_checklist").default("certification_checklist"),
+  // docs/23 core checklist fields.
+  items: z.array(ChecklistItemSchema).default([]),
+  metRequirements: z.array(z.string()).default([]),
+  unmetRequirements: z.array(z.string()).default([]),
+  // Rendering + disclaimer carrier.
+  conclusion: z.string().default(""),
+  finalMarkdown: z.string().default(""),
+  // Shared domain-safety surface (CLAUDE.md non-negotiable #5).
+  missingEvidence: z.array(z.string()).default([]),
+  unsafePhrases: z.array(UnsafePhraseItemSchema).default([]),
+  recommendedSafeWording: z.array(z.string()).default([]),
+  riskLevel: RiskLevelSchema.default("medium"),
+  confidenceScore: z.number().min(0).max(1).default(0.5),
+  // Provider/session bookkeeping — parallel to FinalAnswer.
+  providerSummary: z
+    .array(
+      z.object({
+        providerId: ProviderIdSchema,
+        status: z.string(),
+        latencyMs: z.number().int().nonnegative().optional(),
+      }),
+    )
+    .default([]),
+  sessionStatus: z.string().optional(),
+  // Step 10 evidence usage parity.
+  evidenceUsed: z.array(EvidenceUsedRefSchema).default([]),
+  coveredClaims: z.array(CoveredClaimSchema).default([]),
+  uncoveredClaims: z.array(z.string()).default([]),
+  evidenceCoverageStatus: EvidenceCoverageStatusSchema.default("not_requested"),
+});
+export type CertificationChecklistFinalAnswer = z.infer<
+  typeof CertificationChecklistFinalAnswerSchema
+>;
+
+// Discriminated (by `answerKind`) union of the synthesis output shapes.
+// Branch at runtime with `result.answerKind === "..."`. Each provider parses
+// with the concrete schema for its taskType, so this stays a TS-level union
+// (avoids ZodDefault-on-discriminator pitfalls of z.discriminatedUnion).
+export type SynthesisResult =
+  | FinalAnswer
+  | IdeationFinalAnswer
+  | CertificationChecklistFinalAnswer;
 
 export const CreateSessionRequestSchema = z.object({
   prompt: z.string().min(1).max(8000),

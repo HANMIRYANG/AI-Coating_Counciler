@@ -10,7 +10,12 @@
 // payloads, the per-attempt forensic log, full chunk bodies, or any
 // internal-only debug token.
 
-import type { FinalAnswer, IdeationFinalAnswer, SynthesisResult } from "./schemas";
+import type {
+  CertificationChecklistFinalAnswer,
+  FinalAnswer,
+  IdeationFinalAnswer,
+  SynthesisResult,
+} from "./schemas";
 
 // Minimal structural input — a completed session snapshot. `finalAnswer` is
 // required (the route returns 409 not_ready when it is absent).
@@ -75,8 +80,10 @@ function providerSummaryLines(
 export function buildSessionMarkdown(session: ExportableSession): string {
   const a = session.finalAnswer;
 
-  // Ideation mode (docs/23) has a distinct shape — render its own document.
+  // Non-standard kinds (docs/23) render their own document shape.
   if (a.answerKind === "ideation") return buildIdeationMarkdown(session, a);
+  if (a.answerKind === "certification_checklist")
+    return buildChecklistMarkdown(session, a);
 
   const lines: string[] = [
     "# 기술검토 세션 내보내기",
@@ -228,6 +235,91 @@ function buildIdeationMarkdown(
     "### 근거 연결 주장",
     "",
     ...coveredClaimLines(a.coveredClaims),
+    "",
+    "### 근거 부족 항목",
+    "",
+    ...bulletList(a.uncoveredClaims),
+    "",
+    "## Provider 요약",
+    "",
+    ...providerSummaryLines(a.providerSummary),
+    "",
+  ];
+
+  return lines.join("\n");
+}
+
+function checklistItemLines(
+  items: CertificationChecklistFinalAnswer["items"],
+): string[] {
+  if (items.length === 0) return ["- 없음"];
+  const label: Record<string, string> = {
+    met: "충족",
+    unmet: "미충족",
+    unknown: "확인 필요",
+  };
+  return items.map((it) => {
+    const parts = [`[${label[it.status] ?? it.status}] ${it.requirement}`];
+    if (it.category.trim()) parts.push(`분류: ${it.category}`);
+    if (it.issuingBody.trim()) parts.push(`기관: ${it.issuingBody}`);
+    if (it.gap.trim()) parts.push(`필요: ${it.gap}`);
+    if (it.evidence.trim()) parts.push(`근거: ${it.evidence}`);
+    return `- ${parts.join(" · ")}`;
+  });
+}
+
+/**
+ * Certification-checklist export (docs/23, taskType=certification_checklist).
+ * Deterministic; same header / safety / coverage / provider sections as the
+ * other exports, with the body replaced by the structured checklist.
+ */
+function buildChecklistMarkdown(
+  session: ExportableSession,
+  a: CertificationChecklistFinalAnswer,
+): string {
+  const lines: string[] = [
+    "# 기술검토 세션 내보내기 (인증/규격 체크리스트)",
+    "",
+    `- 세션 ID: ${session.id}`,
+    `- 작업 유형: ${session.taskType}`,
+    `- 근거 모드: ${session.evidenceMode}`,
+    `- 상태: ${session.status}`,
+    "",
+    "## 최종 결론",
+    "",
+    a.conclusion,
+    "",
+    "## 체크리스트",
+    "",
+    ...checklistItemLines(a.items),
+    "",
+    "## 충족 항목",
+    "",
+    ...bulletList(a.metRequirements),
+    "",
+    "## 미충족 항목",
+    "",
+    ...bulletList(a.unmetRequirements),
+    "",
+    "## 누락 근거",
+    "",
+    ...bulletList(a.missingEvidence),
+    "",
+    "## 위험 표현",
+    "",
+    ...unsafePhraseLines(a.unsafePhrases),
+    "",
+    "## 권장 안전 표현",
+    "",
+    ...bulletList(a.recommendedSafeWording),
+    "",
+    "## 근거 커버리지",
+    "",
+    `- 상태: ${a.evidenceCoverageStatus}`,
+    "",
+    "### 사용된 근거",
+    "",
+    ...evidenceUsedLines(a.evidenceUsed),
     "",
     "### 근거 부족 항목",
     "",

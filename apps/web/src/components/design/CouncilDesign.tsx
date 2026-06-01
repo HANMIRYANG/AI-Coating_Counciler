@@ -12,6 +12,7 @@ import type {
   TaskType,
 } from "@/lib/council/types";
 import type {
+  CertificationChecklistFinalAnswer,
   FinalAnswer,
   IdeationFinalAnswer,
   ProviderCritique,
@@ -772,6 +773,12 @@ export function SessionWorkspace({
                         answer={data.finalAnswer}
                         sessionId={sessionId}
                       />
+                    ) : data.finalAnswer.answerKind ===
+                      "certification_checklist" ? (
+                      <ChecklistAnswerCard
+                        answer={data.finalAnswer}
+                        sessionId={sessionId}
+                      />
                     ) : (
                       <FinalAnswerCard
                         answer={data.finalAnswer}
@@ -985,13 +992,21 @@ function VerifyCard({ answer }: { answer: SynthesisResult }) {
           value: `${answer.ideas.length}건`,
           ok: answer.ideas.length > 0,
         }
-      : {
-          icon: "FileText" as IconName,
-          label: "근거 있는 주장",
-          sub: "evidenceBackedClaims",
-          value: `${answer.evidenceBackedClaims.length}건`,
-          ok: answer.evidenceBackedClaims.length > 0,
-        };
+      : answer.answerKind === "certification_checklist"
+        ? {
+            icon: "FileText" as IconName,
+            label: "체크 항목",
+            sub: "items",
+            value: `${answer.items.length}건`,
+            ok: answer.items.length > 0,
+          }
+        : {
+            icon: "FileText" as IconName,
+            label: "근거 있는 주장",
+            sub: "evidenceBackedClaims",
+            value: `${answer.evidenceBackedClaims.length}건`,
+            ok: answer.evidenceBackedClaims.length > 0,
+          };
   const rows = [
     firstRow,
     {
@@ -1301,6 +1316,140 @@ function IdeationAnswerCard({
             items={answer.unresolvedQuestions}
           />
           <DetailGroup title="후속 조사" items={answer.followUpResearch} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Certification-checklist answer card (docs/23,
+// taskType=certification_checklist). Renders the structured checklist +
+// shared safety surface. Unmet/unknown items are visually flagged.
+function ChecklistAnswerCard({
+  answer,
+  sessionId,
+}: {
+  answer: CertificationChecklistFinalAnswer;
+  sessionId: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    await navigator.clipboard?.writeText(answer.finalMarkdown);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1400);
+  };
+
+  const statusLabel: Record<string, string> = {
+    met: "충족",
+    unmet: "미충족",
+    unknown: "확인 필요",
+  };
+  const statusColor: Record<string, string> = {
+    met: "#2a7",
+    unmet: "#c33",
+    unknown: "#b80",
+  };
+
+  return (
+    <div className="final-wrap fade-in">
+      <div className="fitness-card">
+        <div className="fitness-left">
+          <div className="fitness-shield">
+            <Icons.ShieldCheck />
+          </div>
+          <div className="fitness-text">
+            <b>인증/규격 체크리스트</b>
+            <span>{answer.conclusion}</span>
+          </div>
+        </div>
+        <div className="fitness-checks">
+          <div>
+            <Icons.Check /> 충족 {answer.metRequirements.length}
+          </div>
+          <div>
+            <Icons.AlertTriangle /> 미충족 {answer.unmetRequirements.length}
+          </div>
+        </div>
+      </div>
+
+      <div className="answer-card">
+        <div className="answer-h">
+          <Icons.FileText size={16} />
+          <b>체크리스트</b>
+          <span className="meta">risk · {riskLabel(answer.riskLevel)}</span>
+        </div>
+        <div className="answer-body compact">
+          {answer.items.length === 0 ? (
+            <p className="muted">체크 항목이 없습니다.</p>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ textAlign: "left" }}>
+                    <th style={{ padding: 6 }}>항목</th>
+                    <th style={{ padding: 6 }}>분류</th>
+                    <th style={{ padding: 6 }}>상태</th>
+                    <th style={{ padding: 6 }}>필요 조치 / 근거</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {answer.items.map((it, idx) => (
+                    <tr
+                      key={idx}
+                      style={{ borderTop: "1px solid var(--line, #ddd)" }}
+                    >
+                      <td style={{ padding: 6 }}>{it.requirement}</td>
+                      <td style={{ padding: 6 }}>{it.category || "—"}</td>
+                      <td style={{ padding: 6 }}>
+                        <span
+                          className="badge"
+                          style={{ color: statusColor[it.status] }}
+                        >
+                          {statusLabel[it.status] ?? it.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: 6 }}>
+                        {it.gap || it.evidence || "—"}
+                        {it.issuingBody ? (
+                          <span className="muted"> · {it.issuingBody}</span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        <div className="answer-actions">
+          <button className="btn" type="button" onClick={copy}>
+            <Icons.Copy /> {copied ? "복사됨" : "체크리스트 복사"}
+          </button>
+          <a
+            className="btn"
+            href={`/api/council-sessions/${sessionId}/export?format=markdown`}
+            download={`council-session-${sessionId}.md`}
+          >
+            <Icons.Download /> MD 내보내기
+          </a>
+        </div>
+      </div>
+
+      <div className="answer-card secondary">
+        <div className="answer-h">
+          <Icons.Shield size={16} />
+          <b>안전성 점검 및 누락 근거</b>
+        </div>
+        <div className="answer-body compact">
+          <RiskPhrasePanel
+            unsafePhrases={answer.unsafePhrases}
+            recommendedSafeWording={answer.recommendedSafeWording}
+            riskLevel={answer.riskLevel}
+            confidenceScore={answer.confidenceScore}
+          />
+          <DetailGroup title="미충족 항목" items={answer.unmetRequirements} />
+          <DetailGroup title="누락 근거" items={answer.missingEvidence} />
+          <FinalEvidenceCoveragePanel answer={answer} />
         </div>
       </div>
     </div>

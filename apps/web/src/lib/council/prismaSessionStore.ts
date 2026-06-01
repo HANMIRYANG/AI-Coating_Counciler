@@ -44,6 +44,7 @@ import type {
   TaskType,
 } from "./types";
 import {
+  CertificationChecklistFinalAnswerSchema,
   IdeationFinalAnswerSchema,
   type FinalAnswer,
   type ProviderCritique,
@@ -157,10 +158,14 @@ function attemptFromRow(r: ProviderAttemptLog): ProviderAttemptRecord {
 }
 
 function finalAnswerFromRow(r: FinalAnswerRow): SynthesisResult {
-  // Ideation rows persist their full IdeationFinalAnswer payload in `ideation`.
+  // Non-standard kinds persist their full payload in `payload` (with a
+  // back-compat fallback to the legacy `ideation` column for older rows).
   // Re-validate through the schema so defaults / shape are guaranteed.
-  if (r.answerKind === "ideation" && r.ideation != null) {
-    return IdeationFinalAnswerSchema.parse(r.ideation);
+  if (r.answerKind === "ideation") {
+    return IdeationFinalAnswerSchema.parse(r.payload ?? r.ideation);
+  }
+  if (r.answerKind === "certification_checklist") {
+    return CertificationChecklistFinalAnswerSchema.parse(r.payload);
   }
   return {
     answerKind: "standard",
@@ -267,10 +272,14 @@ export class PrismaSessionStore implements SessionStore {
           revisionNumber: 1,
           status: patch.status ?? "completed",
           answerKind: fa.answerKind,
-          ideation:
-            fa.answerKind === "ideation"
-              ? (fa as unknown as Prisma.InputJsonValue)
-              : Prisma.DbNull,
+          // Non-standard kinds (ideation / certification_checklist / …) persist
+          // their full payload generically; standard answers use the columns.
+          payload:
+            fa.answerKind === "standard"
+              ? Prisma.DbNull
+              : (fa as unknown as Prisma.InputJsonValue),
+          // Legacy column — no longer written; kept for back-compat reads only.
+          ideation: Prisma.DbNull,
           conclusion: fa.conclusion,
           finalMarkdown: fa.finalMarkdown,
           businessReadyAnswer:

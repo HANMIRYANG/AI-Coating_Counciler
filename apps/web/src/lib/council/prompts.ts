@@ -433,6 +433,88 @@ ${critiquesBlock}`,
 }
 
 /**
+ * Certification-checklist synthesis prompt (docs/23,
+ * taskType=certification_checklist). Consolidates Round 1/2 into a structured
+ * checklist of required certifications / standards / tests with met/unmet
+ * status. Shared safety surface is REQUIRED so the safety guard still runs.
+ */
+export function buildChecklistSynthesisMessages(
+  providerLabel: string,
+  input: SynthesisInput,
+) {
+  const opinionsBlock = input.opinions
+    .map(
+      (o, i) =>
+        `--- 의견 #${i + 1} from ${o.providerId} ---\n${JSON.stringify(o, null, 2)}`,
+    )
+    .join("\n\n");
+
+  const critiquesBlock = input.critiques
+    .map(
+      (c, i) =>
+        `--- 비판 #${i + 1} from ${c.providerId} ---\n${JSON.stringify(c, null, 2)}`,
+    )
+    .join("\n\n");
+
+  const system = `${DOMAIN_SAFETY_POLICY_SUMMARY}
+
+당신은 한국 특수도료/기능성 코팅제 제조사의 기술검토 회의 최종 합성 AI(${providerLabel})입니다.
+이 세션은 인증/규격 체크리스트 모드(certification_checklist)입니다. Round 1 의견과 Round 2 비판을 종합하여,
+해당 적용 분야에 필요한 인증/규격/시험 항목을 구조화된 체크리스트로 정리하세요.
+
+${taskTypeGuidance(input.taskType)}
+
+${JSON_RULES_KO}
+
+추가 규칙:
+- 각 항목의 status는 met(충족) / unmet(미충족) / unknown(확인 필요) 중 하나로만 표기하세요.
+- 사용자가 보유 사실을 명시하지 않은 항목은 절대 met으로 단정하지 말고 unknown 또는 unmet으로 두세요.
+- 미보유 인증을 '보유/확보됨'으로 표현하지 마세요. 발급/적합 여부는 issuingBody와 함께 "인증기관 확인 필요"로 표현하세요.
+- gap에는 미충족/미확인 항목을 충족하기 위해 추가로 필요한 시험/서류/조건을 적으세요.
+- finalMarkdown은 사람이 읽을 수 있는 한국어 체크리스트 요약으로 작성하세요.
+
+응답 JSON 스키마:
+{
+  "answerKind": "certification_checklist",
+  "items": [{
+    "requirement": string,
+    "category": string,
+    "status": "met"|"unmet"|"unknown",
+    "evidence": string,
+    "gap": string,
+    "issuingBody": string
+  }],
+  "metRequirements": string[],
+  "unmetRequirements": string[],
+  "conclusion": string,
+  "finalMarkdown": string,
+  "missingEvidence": string[],
+  "unsafePhrases": [{ "phrase": string, "reason"?: string, "recommended"?: string }],
+  "recommendedSafeWording": string[],
+  "riskLevel": "low"|"medium"|"high"|"critical",
+  "confidenceScore": number,
+  "providerSummary": [{ "providerId": "openai"|"anthropic"|"gemini", "status": string, "latencyMs"?: number }]
+}
+
+특히 다음 한국어 표현은 unsafePhrases에 반드시 포함하세요: ${KNOWN_DANGEROUS_PHRASES_LIST}`;
+
+  const user = withEvidenceBlock(
+    `taskType: ${input.taskType}
+사용자 질문:
+${input.userPrompt}
+
+Round 1 의견:
+${opinionsBlock}
+
+Round 2 비판:
+${critiquesBlock}`,
+    input.evidenceContext,
+  );
+
+  return { system, user };
+}
+
+/**
  * Thrown when no parseable JSON object can be extracted from raw LLM output.
  * Carries the original raw text so the orchestrator can persist it on the
  * call record for debugging.
