@@ -22,6 +22,7 @@
 
 import { NextResponse } from "next/server";
 
+import { checkWriteAuth } from "@/lib/apiAuth";
 import {
   CreateDocumentRequestSchema,
   SupportedDocumentMimeSchema,
@@ -36,6 +37,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  const denied = checkWriteAuth(req);
+  if (denied) return denied;
+
   let body: unknown;
   try {
     body = await req.json();

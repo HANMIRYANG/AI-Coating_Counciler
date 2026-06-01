@@ -16,6 +16,7 @@
 //   filtering before exposing it beyond a trusted network.
 
 import { NextResponse } from "next/server";
+import { checkWriteAuth } from "@/lib/apiAuth";
 import { CreateSessionRequestSchema } from "@/lib/council/schemas";
 import { getSessionStore, newSessionId, type SessionRecord } from "@/lib/council/store";
 import { buildProviderRegistry } from "@/lib/council/providers";
@@ -34,6 +35,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST(req: Request) {
+  const denied = checkWriteAuth(req);
+  if (denied) return denied;
+
   let body: unknown;
   try {
     body = await req.json();

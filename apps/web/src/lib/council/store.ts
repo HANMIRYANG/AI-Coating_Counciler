@@ -273,7 +273,6 @@ function getOrCreateGlobalStore(): SessionStore {
 
   if (selectedBackend() === "prisma") {
     // Lazy require so the memory-only code path never loads @prisma/client.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const mod = require("./prismaSessionStore") as typeof import("./prismaSessionStore");
     g[KEY] = new mod.PrismaSessionStore();
   } else {

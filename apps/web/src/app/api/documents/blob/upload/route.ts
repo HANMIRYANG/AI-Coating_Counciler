@@ -16,6 +16,8 @@
 import { NextResponse } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 
+import { checkWriteAuth } from "@/lib/apiAuth";
+
 import {
   MAX_ORIGINAL_BLOB_BYTES,
   SUPPORTED_ORIGINAL_MIME_TYPES,
@@ -39,6 +41,9 @@ function parseDescriptor(
 }
 
 export async function POST(req: Request) {
+  const denied = checkWriteAuth(req);
+  if (denied) return denied;
+
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     return NextResponse.json(
       {

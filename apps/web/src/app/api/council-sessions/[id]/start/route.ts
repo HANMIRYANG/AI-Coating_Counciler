@@ -5,6 +5,7 @@
 // if the session has not yet entered round1_running.
 
 import { NextResponse } from "next/server";
+import { checkWriteAuth } from "@/lib/apiAuth";
 import { getSessionStore } from "@/lib/council/store";
 import { buildProviderRegistry } from "@/lib/council/providers";
 import {
@@ -20,9 +21,12 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: { id: string } },
 ) {
+  const denied = checkWriteAuth(req);
+  if (denied) return denied;
+
   const store = getSessionStore();
   const sess = await store.get(params.id);
   if (!sess) {

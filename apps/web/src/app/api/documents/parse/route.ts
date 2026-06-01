@@ -23,6 +23,7 @@
 
 import { NextResponse } from "next/server";
 
+import { checkWriteAuth } from "@/lib/apiAuth";
 import {
   DocumentMetadataSchema,
   type DocumentMetadata,
@@ -60,6 +61,9 @@ function isUploadedFile(value: unknown): value is UploadedFile {
 }
 
 export async function POST(req: Request) {
+  const denied = checkWriteAuth(req);
+  if (denied) return denied;
+
   let form: FormData;
   try {
     form = await req.formData();
