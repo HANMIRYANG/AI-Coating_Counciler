@@ -318,6 +318,16 @@ export class CouncilOrchestrator {
 
   // ───────────────────── round execution ─────────────────────────────
 
+  // Terminal call log so an operator can SEE the parallel dispatch + the real
+  // model names + latency. On by default in any env; set COUNCIL_CALL_LOG=false
+  // to silence. (Low volume — a few lines per round.)
+  private clog(line: string): void {
+    if (process.env.NODE_ENV === "test") return; // keep test output clean
+    if (process.env.COUNCIL_CALL_LOG !== "false") {
+      console.info(line);
+    }
+  }
+
   private async runRound<T>(args: {
     sessionId: string;
     round: RoundKey;
@@ -351,6 +361,11 @@ export class CouncilOrchestrator {
       ),
     );
 
+    const dispatchAt = Date.now();
+    this.clog(
+      `[council ${sessionId}] round=${round} · dispatching ${PROVIDER_IDS.length} providers IN PARALLEL`,
+    );
+
     const settled = await Promise.allSettled(
       PROVIDER_IDS.map((id) =>
         this.runProvider<T>({
@@ -362,6 +377,7 @@ export class CouncilOrchestrator {
           baseTimeoutMs: this.cfg.providerTimeoutMs,
           roundDeadline,
           sessionDeadline,
+          dispatchAt,
         }),
       ),
     );
@@ -393,6 +409,9 @@ export class CouncilOrchestrator {
       }
     }
 
+    this.clog(
+      `[council ${sessionId}] round=${round} DONE · ${successes.length} ok / ${failures.length} fail (${Date.now() - dispatchAt}ms wall)`,
+    );
     return { successes, failures };
   }
 
@@ -405,6 +424,7 @@ export class CouncilOrchestrator {
     baseTimeoutMs: number;
     roundDeadline: number;
     sessionDeadline: number;
+    dispatchAt: number;
   }): Promise<RunResult<T>> {
     const provider = this.providers[args.providerId];
     const start = Date.now();
@@ -497,6 +517,10 @@ export class CouncilOrchestrator {
           model: modelForThisHop,
         };
 
+        this.clog(
+          `[council ${args.sessionId}]   → ${args.providerId} START model=${modelForThisHop} (+${Date.now() - args.dispatchAt}ms)`,
+        );
+
         try {
           // The limiter's 429 retry sleep must respect the same deadline
           // the orchestrator is enforcing, otherwise a long Retry-After
@@ -559,10 +583,16 @@ export class CouncilOrchestrator {
             modelUsed: modelForThisHop,
             rateLimited: rateLimitedSeen,
           });
+          this.clog(
+            `[council ${args.sessionId}]   ← ${args.providerId} OK model=${modelForThisHop} ${latencyMs}ms`,
+          );
           return { ok: true, value: value as T, latencyMs };
         } catch (err) {
           const norm = normalizeProviderError(args.providerId, err);
           lastError = norm;
+          this.clog(
+            `[council ${args.sessionId}]   ← ${args.providerId} FAIL(${norm.errorType}) model=${modelForThisHop} (+${Date.now() - args.dispatchAt}ms) ${norm.message}`,
+          );
 
           if (norm.errorType === "rate_limit") {
             rateLimitedSeen = true;
