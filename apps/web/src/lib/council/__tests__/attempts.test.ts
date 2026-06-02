@@ -10,7 +10,7 @@ import {
 import { getSessionStore, newSessionId, type SessionRecord } from "../store";
 import type { ProviderId, SessionStatus } from "../types";
 import { __resetRateLimitersForTest } from "../rateLimiter";
-import { DEFAULT_MODELS, inferAccuracyMode } from "../models";
+import { DEFAULT_MODELS, inferAccuracyMode, resolveModelChain } from "../models";
 import { SchemaValidationError } from "../prompts";
 
 for (const id of ["OPENAI", "ANTHROPIC", "GEMINI"]) {
@@ -149,7 +149,7 @@ describe("Attempt log — every model hop is recorded", () => {
     expect(anthropic.every((a) => a.status === "rate_limited")).toBe(true);
   });
 
-  it("Gemini high-accuracy 429 records [highAccuracy, primary, fastFallback]", async () => {
+  it("Gemini high-accuracy 429 records the resolved (deduped) chain", async () => {
     const store = getSessionStore();
     const sess = newSession({
       userPrompt: "배터리 화재 방지 검토",
@@ -163,11 +163,11 @@ describe("Attempt log — every model hop is recorded", () => {
     const gemini = (final?.attempts ?? []).filter(
       (a) => a.providerId === "gemini" && a.round === "initial",
     );
-    expect(gemini.map((a) => a.model)).toEqual([
-      DEFAULT_MODELS.gemini.highAccuracy,
-      DEFAULT_MODELS.gemini.primary,
-      DEFAULT_MODELS.gemini.fastFallback,
-    ]);
+    // gemini highAccuracy == fastFallback (2.5-flash) → the chain dedups, so
+    // assert against the actual resolved chain rather than a fixed 3-hop list.
+    expect(gemini.map((a) => a.model)).toEqual(
+      resolveModelChain("gemini", "high_accuracy"),
+    );
   });
 
   it("records attempts for all three rounds (initial / critique / synthesis)", async () => {

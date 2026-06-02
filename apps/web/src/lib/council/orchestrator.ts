@@ -322,7 +322,8 @@ export class CouncilOrchestrator {
   // model names + latency. On by default in any env; set COUNCIL_CALL_LOG=false
   // to silence. (Low volume — a few lines per round.)
   private clog(line: string): void {
-    if (process.env.NODE_ENV === "test") return; // keep test output clean
+    // Keep test output clean (vitest sets VITEST; some setups don't set NODE_ENV).
+    if (process.env.VITEST || process.env.NODE_ENV === "test") return;
     if (process.env.COUNCIL_CALL_LOG !== "false") {
       console.info(line);
     }
@@ -367,8 +368,8 @@ export class CouncilOrchestrator {
     );
 
     const settled = await Promise.allSettled(
-      PROVIDER_IDS.map((id) =>
-        this.runProvider<T>({
+      PROVIDER_IDS.map(async (id) => {
+        const r = await this.runProvider<T>({
           sessionId,
           providerId: id,
           round,
@@ -378,8 +379,20 @@ export class CouncilOrchestrator {
           roundDeadline,
           sessionDeadline,
           dispatchAt,
-        }),
-      ),
+        });
+        // Append THIS provider's result the moment it succeeds — IN PARALLEL —
+        // so a fast provider's opinion/critique surfaces immediately instead of
+        // waiting for the slowest provider to settle. (A persist hiccup must
+        // never drop the successful result.)
+        if (r.ok) {
+          try {
+            await onSuccess(r.value);
+          } catch {
+            /* ignore append error — the result is still counted below */
+          }
+        }
+        return r;
+      }),
     );
 
     const successes: T[] = [];
@@ -392,7 +405,6 @@ export class CouncilOrchestrator {
         const r = s.value;
         if (r.ok) {
           successes.push(r.value);
-          await onSuccess(r.value);
         } else {
           failures.push(r.error);
         }
@@ -708,8 +720,12 @@ export class CouncilOrchestrator {
     accuracyMode: AccuracyMode,
     sessionDeadline: number,
   ): Promise<SynthesisResult> {
-    // GPT primary, Claude fallback per docs/05_round_based_orchestration.md.
-    const order: ProviderId[] = ["openai", "anthropic", "gemini"];
+    // Synthesis needs ONE good answer and tries providers sequentially (first
+    // success wins). Order by speed-then-quality so the final answer isn't
+    // bottlenecked by the slowest model: Claude (fast + strong synthesizer)
+    // first, then GPT, then Gemini-flash. (docs/05 originally put GPT first,
+    // but gpt-5.x latency makes it a poor primary for the sequential path.)
+    const order: ProviderId[] = ["anthropic", "openai", "gemini"];
 
     for (const id of order) {
       const provider = this.providers[id];
@@ -1272,20 +1288,24 @@ export class CouncilOrchestrator {
       return notRequestedPreview(sess.evidenceMode);
     }
 
-    // Internal-document retrieval (Step 7). Always attempted for non-ai_only.
-    const internal = await this.runInternalEvidencePreflight(sess);
-
-    // External official-source fetch (internal_docs_web, docs/23). Side-car:
-    // runs independently of the internal retrieval and NEVER halts the run.
-    if (
+    // Internal-document retrieval (Step 7) and external official-source fetch
+    // (internal_docs_web, docs/23) are INDEPENDENT — run them CONCURRENTLY so
+    // the preflight wall-time is max(internal≈8s, external≈20s) instead of
+    // their sum. Both never throw / never halt the run.
+    const wantExternal =
       sess.evidenceMode === "internal_docs_web" &&
-      sess.sourceUrls &&
-      sess.sourceUrls.length > 0
-    ) {
-      const external = await this.fetchExternalCandidates(sess.sourceUrls);
-      return withExternalCandidates(internal, external);
-    }
-    return internal;
+      !!sess.sourceUrls &&
+      sess.sourceUrls.length > 0;
+
+    const [internal, external] = await Promise.all([
+      this.runInternalEvidencePreflight(sess),
+      wantExternal
+        ? this.fetchExternalCandidates(sess.sourceUrls as string[])
+        : Promise.resolve([] as EvidencePreviewCandidate[]),
+    ]);
+
+    // withExternalCandidates returns `internal` unchanged when external is empty.
+    return withExternalCandidates(internal, external);
   }
 
   private async runInternalEvidencePreflight(

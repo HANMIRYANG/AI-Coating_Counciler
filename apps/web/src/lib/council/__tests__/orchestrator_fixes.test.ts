@@ -15,7 +15,7 @@ import {
 import { getSessionStore, newSessionId, type SessionRecord } from "../store";
 import type { ProviderId, SessionStatus } from "../types";
 import { __resetRateLimitersForTest } from "../rateLimiter";
-import { DEFAULT_MODELS } from "../models";
+import { DEFAULT_MODELS, resolveModelChain } from "../models";
 import { SchemaValidationError } from "../prompts";
 
 // Keep rate-limiter timings tiny so tests finish quickly.
@@ -407,7 +407,7 @@ describe("High-accuracy chain regression", () => {
     );
   });
 
-  it("Gemini high_accuracy walks [highAccuracy, primary, fastFallback] on persistent 429", async () => {
+  it("Gemini high_accuracy walks the resolved (deduped) chain on persistent 429", async () => {
     const store = getSessionStore();
     const sess = newSession({
       userPrompt: "배터리 화재 방지 검토",
@@ -417,21 +417,18 @@ describe("High-accuracy chain regression", () => {
     const o = new CouncilOrchestrator(reg, fastTiming({}), store);
     await o.run(sess.id);
 
+    // gemini highAccuracy == fastFallback (2.5-flash) → chain dedups. Assert
+    // against the actual resolved chain rather than a fixed 3-hop list.
+    const chain = resolveModelChain("gemini", "high_accuracy");
     const models = reg.gemini.callsByRound.initial.map((c) => c.model);
-    expect(models).toEqual([
-      DEFAULT_MODELS.gemini.highAccuracy,
-      DEFAULT_MODELS.gemini.primary,
-      DEFAULT_MODELS.gemini.fastFallback,
-    ]);
+    expect(models).toEqual(chain);
 
     const final = await store.get(sess.id);
     const geminiCall = final?.providerCalls.find(
       (c) => c.providerId === "gemini" && c.round === "initial",
     );
-    expect(geminiCall?.modelRequested).toBe(
-      DEFAULT_MODELS.gemini.highAccuracy,
-    );
-    expect(geminiCall?.modelUsed).toBe(DEFAULT_MODELS.gemini.fastFallback);
+    expect(geminiCall?.modelRequested).toBe(chain[0]);
+    expect(geminiCall?.modelUsed).toBe(chain[chain.length - 1]);
   });
 });
 
