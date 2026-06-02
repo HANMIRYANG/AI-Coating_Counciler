@@ -195,7 +195,7 @@ class SingleProviderLimiter {
     // ran its release) would queue new calls FOREVER — bypassing every
     // per-call / round / session timeout. (Runs before the try/finally below,
     // so a rejection here never wrongly releases a slot we never took.)
-    await this.acquireSlot(opts.deadlineMs, opts.abortSignal);
+    const release = await this.acquireSlot(opts.deadlineMs, opts.abortSignal);
     const start = Date.now();
     let attempt = 0;
 
@@ -322,22 +322,51 @@ class SingleProviderLimiter {
         }
       }
     } finally {
-      this.releaseSlot();
+      release();
     }
+  }
+
+  // A slot must never legitimately be held longer than the provider timeout
+  // (every task is withTimeout-bounded). If it is, the holder was orphaned —
+  // e.g. a dev-server recompile killed an in-process background task before its
+  // release ran. Reclaim the slot so the limiter self-heals instead of leaking
+  // capacity and queueing every future call.
+  private slotWatchdogMs(): number {
+    const base = Number(process.env.PROVIDER_TIMEOUT_MS);
+    const provider = Number.isFinite(base) && base > 0 ? base : 90_000;
+    return Math.max(120_000, provider * 2);
+  }
+
+  // Take a slot NOW: increment inFlight, arm the orphan watchdog, and return an
+  // idempotent release that clears the watchdog and pumps the queue.
+  private grantSlot(): () => void {
+    this.inFlight += 1;
+    let released = false;
+    let watchdog: ReturnType<typeof setTimeout>;
+    const release = () => {
+      if (released) return;
+      released = true;
+      clearTimeout(watchdog);
+      this.inFlight = Math.max(0, this.inFlight - 1);
+      this.pumpQueue();
+    };
+    watchdog = setTimeout(release, this.slotWatchdogMs());
+    // Don't let the orphan-reclaim timer keep the process/event loop alive.
+    (watchdog as unknown as { unref?: () => void }).unref?.();
+    return release;
   }
 
   private acquireSlot(
     deadlineMs?: number,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<() => void> {
     if (this.inFlight < this.opts.maxConcurrent) {
-      this.inFlight += 1;
-      return Promise.resolve();
+      return Promise.resolve(this.grantSlot());
     }
     if (signal?.aborted) {
       return Promise.reject(new Error("aborted before slot acquisition"));
     }
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<() => void>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       let onAbort: (() => void) | undefined;
       const cleanup = () => {
@@ -347,10 +376,9 @@ class SingleProviderLimiter {
 
       const waiter: Waiter = {
         cancelled: false,
-        // releaseSlot has already incremented inFlight for us.
         grant: () => {
           cleanup();
-          resolve();
+          resolve(this.grantSlot());
         },
         cancel: (e: unknown) => {
           if (waiter.cancelled) return;
@@ -378,15 +406,12 @@ class SingleProviderLimiter {
     });
   }
 
-  private releaseSlot(): void {
-    this.inFlight = Math.max(0, this.inFlight - 1);
-    // Skip waiters that already gave up (deadline / abort).
+  // Grant the next non-cancelled waiter a slot when capacity frees up.
+  private pumpQueue(): void {
+    if (this.inFlight >= this.opts.maxConcurrent) return;
     let next = this.queue.shift();
     while (next && next.cancelled) next = this.queue.shift();
-    if (next) {
-      this.inFlight += 1;
-      next.grant();
-    }
+    if (next) next.grant();
   }
 
   /**

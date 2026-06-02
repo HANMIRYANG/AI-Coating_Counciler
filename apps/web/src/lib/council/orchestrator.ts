@@ -440,6 +440,18 @@ export class CouncilOrchestrator {
       throw err;
     }
 
+    // Record the requested model now (status stays "running") so the UI shows
+    // the model name during the in-flight call instead of "모델 대기".
+    await this.store.upsertProviderCall(args.sessionId, {
+      providerId: args.providerId,
+      round: args.round,
+      status: "running",
+      startedAt: start,
+      timeoutMs: args.baseTimeoutMs,
+      retryCount: 0,
+      modelRequested: chain[0],
+    });
+
     let lastError: NormalizedProviderError | undefined;
     let rateLimitedSeen = false;
     let totalAttempts = 0;

@@ -735,7 +735,7 @@ export function SessionWorkspace({
   error: string | null;
 }) {
   const statusText = data ? SESSION_STATUS_TEXT[data.status] : "세션 로딩 중";
-  const currentStep = data ? computeCurrentStep(data.status, data.opinions) : 1;
+  const stepStates = computeStepStates(data?.status, data?.opinions ?? []);
   const done = !!data && isTerminal(data.status);
   const opinionsByProvider = useMemo(() => {
     const map = new Map<ProviderId, ProviderOpinion>();
@@ -789,7 +789,7 @@ export function SessionWorkspace({
                     <span className="time">{statusText}</span>
                   </div>
 
-                  <StepperCard current={currentStep} done={done} />
+                  <StepperCard states={stepStates} done={done} />
                   <ProviderHealthBar health={data.providerHealth} />
 
                   <div className="ai-grid">
@@ -858,7 +858,13 @@ export function SessionWorkspace({
   );
 }
 
-function StepperCard({ current, done }: { current: number; done: boolean }) {
+function StepperCard({
+  states,
+  done,
+}: {
+  states: StepState[];
+  done: boolean;
+}) {
   return (
     <div className="stepper-card">
       <h3>
@@ -868,13 +874,7 @@ function StepperCard({ current, done }: { current: number; done: boolean }) {
       </h3>
       <div className="stepper">
         {STEPS.map((s, i) => {
-          const idx = i + 1;
-          const state =
-            idx < current || done
-              ? "is-done"
-              : idx === current
-                ? "is-active"
-                : "is-pending";
+          const state = states[i] ?? "is-pending";
           return (
             <div key={s.n} className={`step ${state}`}>
               <div className="step-bubble">
@@ -920,7 +920,10 @@ function AiOpinionCard({
         </div>
         <b>{PROVIDER_LABELS[providerId]} 의견</b>
         <span className="ver">
-          {call?.modelUsed ?? opinion?.model ?? "모델 대기"}
+          {call?.modelUsed ??
+            call?.modelRequested ??
+            opinion?.model ??
+            (state === "streaming" ? "호출 중…" : "모델 대기")}
         </span>
       </div>
 
@@ -1670,12 +1673,45 @@ function DetailGroup({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-function computeCurrentStep(
-  status: SessionStatus,
+type StepState = "is-done" | "is-active" | "is-pending";
+
+// Per-step states for the 6-step tracker. Steps 1–3 are the THREE providers
+// (Gemini/Claude/GPT) which run IN PARALLEL during Round 1 — so they are all
+// active simultaneously (not sequential), each flipping to done as its opinion
+// lands. Steps 4/5/6 are the sequential meeting / verify / synthesis phases.
+function computeStepStates(
+  status: SessionStatus | undefined,
   opinions: ProviderOpinion[],
-): number {
+): StepState[] {
+  const states: StepState[] = [
+    "is-pending",
+    "is-pending",
+    "is-pending",
+    "is-pending",
+    "is-pending",
+    "is-pending",
+  ];
+  if (!status) return states;
+
+  const providerStep: Record<ProviderId, number> = {
+    gemini: 0,
+    anthropic: 1,
+    openai: 2,
+  };
+  const haveOpinion = new Set(opinions.map((o) => o.providerId));
+  const markProvider = (s: StepState) => {
+    states[0] = states[1] = states[2] = s;
+  };
+  const reflectProviderOpinions = (fallback: StepState) => {
+    for (const id of ["gemini", "anthropic", "openai"] as ProviderId[]) {
+      states[providerStep[id]] = haveOpinion.has(id) ? "is-done" : fallback;
+    }
+  };
+
   if (status === "round1_running") {
-    return Math.max(1, Math.min(3, opinions.length + 1));
+    // All three providers running at once; flip to done as opinions arrive.
+    reflectProviderOpinions("is-active");
+    return states;
   }
   if (
     status === "round1_completed" ||
@@ -1683,18 +1719,36 @@ function computeCurrentStep(
     status === "round1_limited" ||
     status === "round2_running"
   ) {
-    return 4;
+    markProvider("is-done");
+    states[3] = "is-active";
+    return states;
   }
   if (
     status === "round2_completed" ||
     status === "round2_partial" ||
     status === "round2_limited"
   ) {
-    return 5;
+    markProvider("is-done");
+    states[3] = "is-done";
+    states[4] = "is-active";
+    return states;
   }
-  if (status === "synthesis_running") return 6;
-  if (isTerminal(status)) return 6;
-  return 1;
+  if (status === "synthesis_running") {
+    markProvider("is-done");
+    states[3] = "is-done";
+    states[4] = "is-done";
+    states[5] = "is-active";
+    return states;
+  }
+  if (isTerminal(status)) {
+    if (status === "failed" || status === "timed_out") {
+      // Show how far it got: provider steps done only if their opinion landed.
+      reflectProviderOpinions("is-pending");
+      return states;
+    }
+    return states.map(() => "is-done");
+  }
+  return states; // created / preparing
 }
 
 function isTerminal(status: SessionStatus): boolean {
