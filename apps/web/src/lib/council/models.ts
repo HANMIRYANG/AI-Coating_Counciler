@@ -58,7 +58,10 @@ export const DEFAULT_MODELS: Record<ProviderId, ModelChain> = {
   gemini: {
     primary: "gemini-3.5-flash",
     fastFallback: "gemini-2.5-flash",
-    highAccuracy: "gemini-2.5-pro",
+    // gemini-2.5-flash (not -pro): faster + cheaper + higher rate limits, so it
+    // reliably returns results under billing AND avoids the free-tier 0-quota
+    // block on -pro. Claude/GPT carry the high-accuracy weight in the council.
+    highAccuracy: "gemini-2.5-flash",
   },
 };
 
