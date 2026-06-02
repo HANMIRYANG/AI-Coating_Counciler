@@ -90,6 +90,11 @@ export type TimingConfig = {
   maxRetries: number;
   minOpinionsForMeeting: number;
   minCritiquesForSynthesis: number;
+  // Quorum early-progression (audit #2): once a round reaches its minimum
+  // successful provider count, wait at most this long for the remaining
+  // providers, then cancel stragglers and advance. Set very high to effectively
+  // restore "wait for all" behavior.
+  roundQuorumGraceMs: number;
 };
 
 export function defaultTimingConfig(): TimingConfig {
@@ -106,6 +111,7 @@ export function defaultTimingConfig(): TimingConfig {
     maxRetries: n("MAX_PROVIDER_RETRIES", 1),
     minOpinionsForMeeting: n("MIN_INITIAL_OPINIONS_FOR_MEETING", 2),
     minCritiquesForSynthesis: n("MIN_CRITIQUES_FOR_SYNTHESIS", 2),
+    roundQuorumGraceMs: n("ROUND_QUORUM_GRACE_MS", 8_000),
   };
 }
 
@@ -191,6 +197,7 @@ export class CouncilOrchestrator {
         call: (p, opts) => p.generateInitialOpinion(opinionInput, opts),
         onSuccess: (op) => this.store.appendOpinion(sessionId, op),
         sessionDeadline,
+        quorum: this.cfg.minOpinionsForMeeting,
       });
 
       const r1ok = r1.successes.length;
@@ -235,6 +242,7 @@ export class CouncilOrchestrator {
         call: (p, opts) => p.generateCritique(critiqueInput, opts),
         onSuccess: (c) => this.store.appendCritique(sessionId, c),
         sessionDeadline,
+        quorum: this.cfg.minCritiquesForSynthesis,
       });
 
       const r2ok = r2.successes.length;
@@ -336,9 +344,18 @@ export class CouncilOrchestrator {
     call: (p: AiProviderAdapter, opts: ProviderCallOptions) => Promise<T>;
     onSuccess: (value: T) => Promise<void>;
     sessionDeadline: number;
+    /** Minimum successes that trigger the quorum grace window (audit #2). */
+    quorum: number;
   }): Promise<{ successes: T[]; failures: NormalizedProviderError[] }> {
-    const { sessionId, round, accuracyMode, call, onSuccess, sessionDeadline } =
-      args;
+    const {
+      sessionId,
+      round,
+      accuracyMode,
+      call,
+      onSuccess,
+      sessionDeadline,
+      quorum,
+    } = args;
 
     // Round budget is bounded by both the configured round timeout AND the
     // remaining session budget.
@@ -367,57 +384,108 @@ export class CouncilOrchestrator {
       `[council ${sessionId}] round=${round} · dispatching ${PROVIDER_IDS.length} providers IN PARALLEL`,
     );
 
-    const settled = await Promise.allSettled(
-      PROVIDER_IDS.map(async (id) => {
-        const r = await this.runProvider<T>({
-          sessionId,
-          providerId: id,
-          round,
-          accuracyMode,
-          call,
-          baseTimeoutMs: this.cfg.providerTimeoutMs,
-          roundDeadline,
-          sessionDeadline,
-          dispatchAt,
-        });
-        // Append THIS provider's result the moment it succeeds — IN PARALLEL —
-        // so a fast provider's opinion/critique surfaces immediately instead of
-        // waiting for the slowest provider to settle. (A persist hiccup must
-        // never drop the successful result.)
-        if (r.ok) {
-          try {
-            await onSuccess(r.value);
-          } catch {
-            /* ignore append error — the result is still counted below */
+    // Per-provider abort handle so the round can CANCEL stragglers once the
+    // quorum grace window expires (audit #2).
+    const aborts = PROVIDER_IDS.map(() => new AbortController());
+    const results: Array<RunResult<T> | undefined> = PROVIDER_IDS.map(
+      () => undefined,
+    );
+    let successCount = 0;
+    let settledCount = 0;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // Resolves when we may advance: all providers settled, OR the grace window
+    // (started once `quorum` successes are in) has elapsed.
+    let proceeded = false;
+    let resolveProceed!: () => void;
+    const proceed = new Promise<void>((res) => {
+      resolveProceed = res;
+    });
+    const triggerProceed = () => {
+      if (!proceeded) {
+        proceeded = true;
+        resolveProceed();
+      }
+    };
+
+    // Dispatch ALL providers in parallel. Each appends its own result the
+    // moment it succeeds (audit #1) and updates the quorum bookkeeping.
+    const tasks = PROVIDER_IDS.map((id, i) =>
+      this.runProvider<T>({
+        sessionId,
+        providerId: id,
+        round,
+        accuracyMode,
+        call,
+        baseTimeoutMs: this.cfg.providerTimeoutMs,
+        roundDeadline,
+        sessionDeadline,
+        dispatchAt,
+        externalSignal: aborts[i].signal,
+      })
+        .then(async (r) => {
+          results[i] = r;
+          settledCount += 1;
+          if (r.ok) {
+            // Append immediately (a persist hiccup must not drop the result).
+            try {
+              await onSuccess(r.value);
+            } catch {
+              /* ignore append error — still counted below */
+            }
+            successCount += 1;
+            // Quorum reached → give stragglers a bounded grace, then advance.
+            if (
+              successCount >= quorum &&
+              graceTimer === undefined &&
+              !proceeded
+            ) {
+              graceTimer = setTimeout(
+                triggerProceed,
+                Math.max(0, this.cfg.roundQuorumGraceMs),
+              );
+              (graceTimer as unknown as { unref?: () => void }).unref?.();
+            }
           }
-        }
-        return r;
-      }),
+          if (settledCount === PROVIDER_IDS.length) triggerProceed();
+        })
+        .catch(() => {
+          // runProvider never throws; defensive only.
+          settledCount += 1;
+          if (settledCount === PROVIDER_IDS.length) triggerProceed();
+        }),
     );
 
+    await proceed;
+    if (graceTimer) clearTimeout(graceTimer);
+
+    // Cancel any provider that hasn't settled yet — its in-flight call is
+    // aborted and runProvider persists a terminal "cancelled" status. We do
+    // NOT await it (fire-and-forget) so the laggard can't hold the round.
+    for (let i = 0; i < PROVIDER_IDS.length; i++) {
+      if (results[i] === undefined) aborts[i].abort();
+    }
+    void Promise.allSettled(tasks);
+
+    // Snapshot results AT THIS POINT (deterministic provider order). Settled
+    // providers contribute their result; cancelled stragglers count as
+    // failures and do not block the next round.
     const successes: T[] = [];
     const failures: NormalizedProviderError[] = [];
-
-    for (let i = 0; i < settled.length; i++) {
+    for (let i = 0; i < PROVIDER_IDS.length; i++) {
       const id = PROVIDER_IDS[i];
-      const s = settled[i];
-      if (s.status === "fulfilled") {
-        const r = s.value;
-        if (r.ok) {
-          successes.push(r.value);
-        } else {
-          failures.push(r.error);
-        }
-      } else {
+      const r = results[i];
+      if (r === undefined) {
         failures.push({
           providerId: id,
           errorType: "unknown",
-          message:
-            s.reason instanceof Error
-              ? s.reason.message
-              : String(s.reason ?? "unknown"),
+          message: "cancelled after quorum grace window",
           retryable: false,
         });
+      } else if (r.ok) {
+        successes.push(r.value);
+      } else {
+        failures.push(r.error);
       }
     }
 
@@ -437,6 +505,8 @@ export class CouncilOrchestrator {
     roundDeadline: number;
     sessionDeadline: number;
     dispatchAt: number;
+    /** Round-level cancel: when aborted, stop and record a terminal status. */
+    externalSignal?: AbortSignal;
   }): Promise<RunResult<T>> {
     const provider = this.providers[args.providerId];
     const start = Date.now();
@@ -503,6 +573,16 @@ export class CouncilOrchestrator {
       const bypassCooldown = chainIdx > 0;
 
       while (perHopAttempts <= this.cfg.maxRetries) {
+        // Round-level cancellation (quorum grace expired): stop before dispatch.
+        if (args.externalSignal?.aborted) {
+          lastError = {
+            providerId: args.providerId,
+            errorType: "unknown",
+            message: "cancelled after quorum grace window",
+            retryable: false,
+          };
+          break;
+        }
         const effectiveTimeout = this.computeAttemptBudget(
           args.baseTimeoutMs,
           args.roundDeadline,
@@ -520,6 +600,16 @@ export class CouncilOrchestrator {
         }
 
         const controller = new AbortController();
+        // Link the round-level cancel to THIS attempt's controller so an
+        // in-flight provider call is actually aborted on quorum-grace expiry.
+        const onExternalAbort = () => controller.abort();
+        if (args.externalSignal) {
+          if (args.externalSignal.aborted) controller.abort();
+          else
+            args.externalSignal.addEventListener("abort", onExternalAbort, {
+              once: true,
+            });
+        }
         const callOpts: ProviderCallOptions = {
           timeoutMs: effectiveTimeout,
           retryCount: totalAttempts,
@@ -662,6 +752,7 @@ export class CouncilOrchestrator {
           );
         } finally {
           controller.abort();
+          args.externalSignal?.removeEventListener("abort", onExternalAbort);
         }
       }
 
@@ -670,8 +761,12 @@ export class CouncilOrchestrator {
     }
 
     const latencyMs = Date.now() - start;
-    const status: ProviderStatus =
-      lastError?.errorType === "timeout"
+    // Round-level cancellation (quorum grace expired) is a terminal status of
+    // its own so the UI / logs can distinguish it from a real failure/timeout.
+    const cancelled = args.externalSignal?.aborted ?? false;
+    const status: ProviderStatus = cancelled
+      ? "cancelled"
+      : lastError?.errorType === "timeout"
         ? "timed_out"
         : lastError?.errorType === "schema_validation"
           ? "schema_invalid"
