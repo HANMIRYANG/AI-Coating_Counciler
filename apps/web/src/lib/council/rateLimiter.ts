@@ -113,6 +113,38 @@ class SingleProviderLimiter {
     return this.healthState;
   }
 
+  // ── Diagnostics (read-only) ──────────────────────────────────────────────
+  /** Number of slots currently taken (in-flight calls + any leaked holders). */
+  get inFlightCount(): number {
+    return this.inFlight;
+  }
+  /** Callers parked waiting for a slot. A persistently >0 value with a full
+   *  inFlight indicates saturation / leaked slots. */
+  get queueLength(): number {
+    return this.queue.length;
+  }
+  /** Configured concurrency cap for this provider. */
+  get maxConcurrent(): number {
+    return this.opts.maxConcurrent;
+  }
+
+  /**
+   * Dev/admin escape hatch: forcibly clear all transient limiter state so a
+   * stuck / saturated provider self-heals without a process restart. Queued
+   * waiters are rejected (fail fast) rather than left hanging on a counter we
+   * are about to zero. In-flight tasks keep running but are no longer counted
+   * — their release is idempotent and clamps at 0, so this is always safe.
+   */
+  reset(): void {
+    const waiters = this.queue.slice();
+    this.queue.length = 0;
+    for (const w of waiters) w.cancel(new Error("rate limiter reset"));
+    this.inFlight = 0;
+    this.cooldownUntil = 0;
+    this.recentErrors = 0;
+    this.healthState = "healthy";
+  }
+
   onMetric(fn: (m: RateLimitMetric) => void): () => void {
     this.listeners.push(fn);
     return () => {
@@ -196,6 +228,22 @@ class SingleProviderLimiter {
     // per-call / round / session timeout. (Runs before the try/finally below,
     // so a rejection here never wrongly releases a slot we never took.)
     const release = await this.acquireSlot(opts.deadlineMs, opts.abortSignal);
+    // Release the slot the INSTANT this call is cancelled / timed out, even if
+    // a misbehaving task ignores its abort signal and keeps running in the
+    // background (fire-and-forget). release() is idempotent and we do NOT reject
+    // here, so the task's own outcome and error classification are unchanged —
+    // we only stop counting the slot so a queued caller can proceed promptly.
+    let onAbortRelease: (() => void) | undefined;
+    if (opts.abortSignal) {
+      if (opts.abortSignal.aborted) {
+        release();
+      } else {
+        onAbortRelease = () => release();
+        opts.abortSignal.addEventListener("abort", onAbortRelease, {
+          once: true,
+        });
+      }
+    }
     const start = Date.now();
     let attempt = 0;
 
@@ -322,24 +370,48 @@ class SingleProviderLimiter {
         }
       }
     } finally {
+      if (opts.abortSignal && onAbortRelease) {
+        opts.abortSignal.removeEventListener("abort", onAbortRelease);
+      }
       release();
     }
   }
 
-  // A slot must never legitimately be held longer than the provider timeout
-  // (every task is withTimeout-bounded). If it is, the holder was orphaned —
-  // e.g. a dev-server recompile killed an in-process background task before its
-  // release ran. Reclaim the slot so the limiter self-heals instead of leaking
-  // capacity and queueing every future call.
-  private slotWatchdogMs(): number {
-    const base = Number(process.env.PROVIDER_TIMEOUT_MS);
-    const provider = Number.isFinite(base) && base > 0 ? base : 90_000;
-    return Math.max(120_000, provider * 2);
+  private slotWatchdogGraceMs(): number {
+    const g = Number(process.env.RATE_LIMIT_SLOT_WATCHDOG_GRACE_MS);
+    return Number.isFinite(g) && g >= 0 ? g : 5_000;
   }
 
-  // Take a slot NOW: increment inFlight, arm the orphan watchdog, and return an
-  // idempotent release that clears the watchdog and pumps the queue.
-  private grantSlot(): () => void {
+  // How long a granted slot may be held before the orphan watchdog reclaims it.
+  //
+  // A slot must never legitimately outlive its attempt deadline (every task is
+  // withTimeout-bounded to exactly that deadline). If it does, the holder was
+  // orphaned — e.g. a dev-server recompile / HMR severed an in-process
+  // background task before its release ran. The watchdog must therefore fire:
+  //   - AFTER a legit call's own release (deadline) — so we never reclaim a
+  //     healthy in-flight slot → hence `deadline + grace`;
+  //   - BEFORE a *fresh* queued call hits its own slot-acquire deadline — so a
+  //     leaked slot can't make every future call wait out the full timeout and
+  //     fail with "slot-acquire timed out". Since the orphan's deadline is in
+  //     the past relative to a new call, `deadline + grace` clears comfortably.
+  // The legacy `max(120s, providerTimeout*2)` was LONGER than the acquire
+  // deadline (= providerTimeout), so leaked slots were never reclaimed in time.
+  private slotWatchdogMs(deadlineMs?: number): number {
+    const grace = this.slotWatchdogGraceMs();
+    if (deadlineMs !== undefined) {
+      return Math.max(0, deadlineMs - Date.now()) + grace;
+    }
+    // No deadline supplied → bound by the provider timeout (still far below the
+    // legacy 2× value) so an orphan is reclaimed promptly.
+    const base = Number(process.env.PROVIDER_TIMEOUT_MS);
+    const provider = Number.isFinite(base) && base > 0 ? base : 90_000;
+    return provider + grace;
+  }
+
+  // Take a slot NOW: increment inFlight, arm the orphan watchdog (sized to the
+  // caller's attempt deadline), and return an idempotent release that clears
+  // the watchdog and pumps the queue.
+  private grantSlot(deadlineMs?: number): () => void {
     this.inFlight += 1;
     let released = false;
     let watchdog: ReturnType<typeof setTimeout>;
@@ -350,7 +422,7 @@ class SingleProviderLimiter {
       this.inFlight = Math.max(0, this.inFlight - 1);
       this.pumpQueue();
     };
-    watchdog = setTimeout(release, this.slotWatchdogMs());
+    watchdog = setTimeout(release, this.slotWatchdogMs(deadlineMs));
     // Don't let the orphan-reclaim timer keep the process/event loop alive.
     (watchdog as unknown as { unref?: () => void }).unref?.();
     return release;
@@ -361,7 +433,7 @@ class SingleProviderLimiter {
     signal?: AbortSignal,
   ): Promise<() => void> {
     if (this.inFlight < this.opts.maxConcurrent) {
-      return Promise.resolve(this.grantSlot());
+      return Promise.resolve(this.grantSlot(deadlineMs));
     }
     if (signal?.aborted) {
       return Promise.reject(new Error("aborted before slot acquisition"));
@@ -378,7 +450,7 @@ class SingleProviderLimiter {
         cancelled: false,
         grant: () => {
           cleanup();
-          resolve(this.grantSlot());
+          resolve(this.grantSlot(deadlineMs));
         },
         cancel: (e: unknown) => {
           if (waiter.cancelled) return;
@@ -547,29 +619,52 @@ class RateLimiterRegistry {
     return l;
   }
 
-  snapshot(): Array<{ providerId: ProviderId; health: ProviderHealth; cooldownMs: number }> {
+  snapshot(): Array<{
+    providerId: ProviderId;
+    health: ProviderHealth;
+    cooldownMs: number;
+    inFlight: number;
+    queueLength: number;
+    maxConcurrent: number;
+  }> {
     return Array.from(this.limiters.values()).map((l) => ({
       providerId: l.providerId,
       health: l.health,
       cooldownMs: l.remainingCooldownMs(),
+      inFlight: l.inFlightCount,
+      queueLength: l.queueLength,
+      maxConcurrent: l.maxConcurrent,
     }));
+  }
+
+  resetAll(): void {
+    for (const l of this.limiters.values()) l.reset();
   }
 }
 
 function readEnvOptions(providerId: ProviderId): Partial<RateLimiterOptions> {
   const upper = providerId.toUpperCase();
-  const n = (k: string) => {
-    const v = process.env[k];
-    if (v === undefined) return undefined;
+  // CRITICAL: only emit keys whose env var is set to a finite number. Emitting
+  // an explicit `undefined` (the old behavior) clobbered the constructor
+  // defaults via `{ ...DEFAULT, ...opts }`, leaving e.g. `maxConcurrent =
+  // undefined`. Then `inFlight < undefined` is always false, so EVERY call —
+  // starting with the very first (inFlight 0) — skips the free-slot path,
+  // queues, and fails at the slot-acquire deadline with
+  // "<provider>:slot-acquire timed out after 90000ms" before any API call.
+  // That is the outage this guards against when RATE_LIMIT_*_MAX_CONCURRENT is
+  // left unset in the environment.
+  const out: Partial<RateLimiterOptions> = {};
+  const set = (key: keyof RateLimiterOptions, envKey: string) => {
+    const v = process.env[envKey];
+    if (v === undefined) return;
     const num = Number(v);
-    return Number.isFinite(num) ? num : undefined;
+    if (Number.isFinite(num)) out[key] = num;
   };
-  return {
-    maxConcurrent: n(`RATE_LIMIT_${upper}_MAX_CONCURRENT`),
-    backoffMaxMs: n(`RATE_LIMIT_${upper}_BACKOFF_MAX_MS`),
-    maxRetries: n(`RATE_LIMIT_${upper}_MAX_RETRIES`),
-    cooldownMs: n(`RATE_LIMIT_${upper}_COOLDOWN_MS`),
-  };
+  set("maxConcurrent", `RATE_LIMIT_${upper}_MAX_CONCURRENT`);
+  set("backoffMaxMs", `RATE_LIMIT_${upper}_BACKOFF_MAX_MS`);
+  set("maxRetries", `RATE_LIMIT_${upper}_MAX_RETRIES`);
+  set("cooldownMs", `RATE_LIMIT_${upper}_COOLDOWN_MS`);
+  return out;
 }
 
 const KEY = "__ai_coating_council_rate_limiter__";
@@ -585,6 +680,17 @@ export function getRateLimiter(providerId: ProviderId): SingleProviderLimiter {
 
 export function snapshotProviderHealth() {
   return globalRegistry().snapshot();
+}
+
+/**
+ * Dev/admin: clear all per-provider limiter state (inFlight, queue, cooldown)
+ * so a stuck / saturated provider self-heals without a process restart. Unlike
+ * `__resetRateLimitersForTest`, this keeps the SAME limiter instances (and
+ * their env-derived options) — it only zeroes the transient counters. Gate any
+ * caller behind admin auth.
+ */
+export function resetRateLimiters(): void {
+  globalRegistry().resetAll();
 }
 
 /**
