@@ -78,7 +78,10 @@ export class OpenAiProviderAdapter implements AiProviderAdapter {
             { role: "user", content: user },
           ],
           response_format: { type: "json_object" },
-          temperature: 0.2,
+          // NOTE: do NOT pin temperature. Newer OpenAI models (gpt-5.x) reject
+          // any non-default temperature ("Only the default (1) value is
+          // supported") with a 400, which would fail every call. JSON output is
+          // already enforced via response_format.
         },
         { signal: opts.abortSignal },
       );
