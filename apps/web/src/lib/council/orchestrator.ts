@@ -42,7 +42,7 @@ import {
   type UnsafePhraseFinding,
 } from "./safety";
 import { getSessionStore, type SessionRecord } from "./store";
-import { TimeoutError, withTimeout } from "./timeout";
+import { TimeoutError, withTimeout, sleep } from "./timeout";
 import type {
   CritiqueInput,
   InitialOpinionInput,
@@ -426,7 +426,11 @@ export class CouncilOrchestrator {
         .then(async (r) => {
           results[i] = r;
           settledCount += 1;
-          if (r.ok) {
+          // If the round already advanced past the grace window and cancelled
+          // THIS provider, any success it reports is too late: do not append it
+          // and do not let it count toward the round (concern #1).
+          const cancelledByRound = aborts[i].signal.aborted;
+          if (r.ok && !cancelledByRound) {
             // Append immediately (a persist hiccup must not drop the result).
             try {
               await onSuccess(r.value);
@@ -446,6 +450,21 @@ export class CouncilOrchestrator {
               );
               (graceTimer as unknown as { unref?: () => void }).unref?.();
             }
+          } else if (r.ok && cancelledByRound) {
+            // Same-instant race: the provider succeeded just as we cancelled
+            // it, so runProvider may have already written "succeeded". The
+            // round moved on without it — discard the late result and force
+            // the terminal status back to "cancelled" (never succeeded).
+            await this.store
+              .upsertProviderCall(sessionId, {
+                providerId: id,
+                round,
+                status: "cancelled",
+                retryCount: 0,
+                errorType: "cancelled",
+                errorMessage: "cancelled after quorum grace window",
+              })
+              .catch(() => {});
           }
           if (settledCount === PROVIDER_IDS.length) triggerProceed();
         })
@@ -459,12 +478,39 @@ export class CouncilOrchestrator {
     await proceed;
     if (graceTimer) clearTimeout(graceTimer);
 
-    // Cancel any provider that hasn't settled yet — its in-flight call is
-    // aborted and runProvider persists a terminal "cancelled" status. We do
-    // NOT await it (fire-and-forget) so the laggard can't hold the round.
+    // Quorum grace expired (or all providers settled). Cancel every provider
+    // that hasn't settled yet, then SYNCHRONOUSLY persist its terminal
+    // "cancelled" status BEFORE we advance, so a reader sees it the instant
+    // the round returns (concern #2). The provider task keeps unwinding in the
+    // background (fire-and-forget below) and will only ever re-affirm the same
+    // cancelled status — never overwrite it with a late success (concern #1).
+    const cancelledNow: ProviderId[] = [];
     for (let i = 0; i < PROVIDER_IDS.length; i++) {
-      if (results[i] === undefined) aborts[i].abort();
+      if (results[i] === undefined) {
+        aborts[i].abort();
+        cancelledNow.push(PROVIDER_IDS[i]);
+      }
     }
+    if (cancelledNow.length > 0) {
+      const endedAt = Date.now();
+      await Promise.all(
+        cancelledNow.map((id) =>
+          this.store.upsertProviderCall(sessionId, {
+            providerId: id,
+            round,
+            status: "cancelled",
+            endedAt,
+            latencyMs: endedAt - dispatchAt,
+            timeoutMs: this.cfg.providerTimeoutMs,
+            retryCount: 0,
+            errorType: "cancelled",
+            errorMessage: "cancelled after quorum grace window",
+          }),
+        ),
+      );
+    }
+    // Let the cancelled provider tasks finish their own cleanup off the round's
+    // critical path. They never block the next round.
     void Promise.allSettled(tasks);
 
     // Snapshot results AT THIS POINT (deterministic provider order). Settled
@@ -671,6 +717,43 @@ export class CouncilOrchestrator {
             },
           );
 
+          // Concern #1: the call resolved, but if the round already cancelled
+          // us past the grace window this success is too late. Persist the
+          // terminal "cancelled" status (NOT "succeeded") and return a non-ok
+          // result so runRound never appends the stale opinion/critique.
+          if (args.externalSignal?.aborted) {
+            const lateLatency = Date.now() - start;
+            await this.store.upsertProviderCall(args.sessionId, {
+              providerId: args.providerId,
+              round: args.round,
+              status: "cancelled",
+              startedAt: start,
+              endedAt: Date.now(),
+              latencyMs: lateLatency,
+              timeoutMs: effectiveTimeout,
+              retryCount: totalAttempts,
+              modelRequested: chain[0],
+              modelUsed: modelForThisHop,
+              rateLimited: rateLimitedSeen,
+              errorType: "cancelled",
+              errorMessage: "cancelled after quorum grace window",
+            });
+            this.clog(
+              `[council ${args.sessionId}]   ⤫ ${args.providerId} LATE-OK discarded (cancelled) model=${modelForThisHop} ${lateLatency}ms`,
+            );
+            return {
+              ok: false,
+              error: {
+                providerId: args.providerId,
+                errorType: "unknown",
+                message: "cancelled after quorum grace window",
+                retryable: false,
+              },
+              latencyMs: lateLatency,
+              status: "cancelled",
+            };
+          }
+
           const latencyMs = Date.now() - start;
           await this.store.upsertProviderCall(args.sessionId, {
             providerId: args.providerId,
@@ -747,9 +830,18 @@ export class CouncilOrchestrator {
             // resolve to whichever lastError we have.
             break;
           }
-          await new Promise((r) =>
-            setTimeout(r, wait + Math.random() * 250),
-          );
+          try {
+            // Concern #3: honor the round-level cancel DURING backoff so a
+            // cancelled provider records its terminal status promptly instead
+            // of sleeping through RETRY_MAX_DELAY_MS first. controller.signal
+            // is linked to externalSignal, so a quorum-grace abort rejects the
+            // sleep immediately.
+            await sleep(wait + Math.random() * 250, controller.signal);
+          } catch {
+            // Aborted mid-backoff — stop retrying and fall through to record
+            // the terminal (cancelled) status now.
+            break;
+          }
         } finally {
           controller.abort();
           args.externalSignal?.removeEventListener("abort", onExternalAbort);

@@ -225,3 +225,103 @@ describe("Audit #2 — quorum early progression with grace window", () => {
     expect(initialKeys.length).toBe(new Set(initialKeys).size);
   });
 });
+
+const drain = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe("Audit #2 — cancellation path hardening", () => {
+  it("discards a late success that ignores abort and resolves AFTER the grace window", async () => {
+    // openai ignores its abort signal and resolves SUCCESSFULLY ~300ms after
+    // dispatch — long after the 100ms grace window cancels it. That stale
+    // success must never be appended, and its terminal status must be
+    // "cancelled", not "succeeded".
+    const store = getSessionStore();
+    const sess = newSession();
+    await store.create(sess);
+    const reg = registry({});
+    const realOpenaiOpinion = reg.openai.generateInitialOpinion.bind(
+      reg.openai,
+    );
+    reg.openai.generateInitialOpinion = async (input, opts) => {
+      // Ignore the abort signal entirely; resolve late with a normal opinion.
+      await drain(300);
+      return realOpenaiOpinion(input, { ...opts, abortSignal: undefined });
+    };
+    const o = new CouncilOrchestrator(
+      reg,
+      quorumTiming({ roundQuorumGraceMs: 100 }),
+      store,
+    );
+
+    await o.run(sess.id);
+    // Wait past the late resolution so a (buggy) append would have happened.
+    await drain(400);
+
+    const final = await store.get(sess.id);
+    // The stale opinion was NOT appended.
+    expect(final?.opinions.some((op) => op.providerId === "openai")).toBe(
+      false,
+    );
+    // …and the terminal status is cancelled, never succeeded.
+    expect(initialCall(final, "openai")?.status).toBe("cancelled");
+  });
+
+  it("makes the cancelled providerCall status visible immediately after the round advances", async () => {
+    // No drain: the moment run() returns, the cancelled status must already be
+    // persisted for the hung provider (synchronous terminal write on grace
+    // expiry), not pending on a background task.
+    const store = getSessionStore();
+    const sess = newSession();
+    await store.create(sess);
+    const reg = registry({ failMode: { openai: "hang" } });
+    const o = new CouncilOrchestrator(
+      reg,
+      quorumTiming({ roundQuorumGraceMs: 100 }),
+      store,
+    );
+
+    await o.run(sess.id);
+
+    // Read synchronously after run() — NO drain.
+    const final = await store.get(sess.id);
+    expect(initialCall(final, "openai")?.status).toBe("cancelled");
+  });
+
+  it("records cancelled promptly when a provider is cancelled mid retry-backoff", async () => {
+    // openai fails with a retryable 503 then enters a 4s backoff. The quorum
+    // pair finishes fast, so the 100ms grace cancels openai while it is asleep
+    // in backoff. With the abort-aware backoff, its own task unwinds and writes
+    // the terminal record (retryCount=1) within a fraction of RETRY_MAX_DELAY.
+    process.env.RETRY_BASE_DELAY_MS = "4000";
+    process.env.RETRY_MAX_DELAY_MS = "4000";
+    const store = getSessionStore();
+    const sess = newSession();
+    await store.create(sess);
+    const reg = registry({ failMode: { openai: "retryable_5xx" } });
+    const o = new CouncilOrchestrator(
+      reg,
+      quorumTiming({ roundQuorumGraceMs: 100, maxRetries: 1 }),
+      store,
+    );
+
+    const t0 = Date.now();
+    await o.run(sess.id);
+    // Drain far less than the 4s backoff. If the backoff were NOT abortable the
+    // provider task would still be sleeping and its terminal write (retryCount
+    // from the attempted hop) would not have landed yet.
+    await drain(400);
+    const elapsed = Date.now() - t0;
+
+    const final = await store.get(sess.id);
+    const openai = initialCall(final, "openai");
+    expect(openai?.status).toBe("cancelled");
+    // The provider task ran one attempt before backoff, so its own terminal
+    // write reflects retryCount=1 — proving it unwound rather than sleeping
+    // through RETRY_MAX_DELAY_MS.
+    expect(openai?.retryCount).toBe(1);
+    // Whole thing finished well under the 4s backoff.
+    expect(elapsed).toBeLessThan(2_000);
+
+    process.env.RETRY_BASE_DELAY_MS = "1200";
+    process.env.RETRY_MAX_DELAY_MS = "5000";
+  });
+});
