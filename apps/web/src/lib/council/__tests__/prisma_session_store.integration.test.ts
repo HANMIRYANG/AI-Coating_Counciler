@@ -82,12 +82,13 @@ describeIf("PrismaSessionStore (integration, PRISMA_INTEGRATION=1)", () => {
     createdIds.push(id);
     await store.create(makeRecord(id));
 
-    const updated = await store.update(id, {
+    await store.update(id, {
       status: "round1_running",
       currentRound: "initial",
     });
-    expect(updated.status).toBe("round1_running");
-    expect(updated.currentRound).toBe("initial");
+    const updated = await store.get(id);
+    expect(updated!.status).toBe("round1_running");
+    expect(updated!.currentRound).toBe("initial");
   });
 
   it("upsertProviderCall enforces the (sessionId, providerId, round) unique key", async () => {
@@ -105,7 +106,7 @@ describeIf("PrismaSessionStore (integration, PRISMA_INTEGRATION=1)", () => {
       retryCount: 0,
     });
     // Same key — update (status flips to succeeded)
-    const after = await store.upsertProviderCall(id, {
+    await store.upsertProviderCall(id, {
       providerId: "openai",
       round: "initial",
       status: "succeeded",
@@ -117,7 +118,8 @@ describeIf("PrismaSessionStore (integration, PRISMA_INTEGRATION=1)", () => {
       modelUsed: "gpt-5.5",
     });
 
-    const openaiInitial = after.providerCalls.filter(
+    const after = await store.get(id);
+    const openaiInitial = (after!.providerCalls ?? []).filter(
       (c) => c.providerId === "openai" && c.round === "initial",
     );
     expect(openaiInitial.length).toBe(1);

@@ -246,10 +246,7 @@ export class PrismaSessionStore implements SessionStore {
     return row ? reassemble(row) : undefined;
   }
 
-  async update(
-    id: string,
-    patch: Partial<SessionRecord>,
-  ): Promise<SessionRecord> {
+  async update(id: string, patch: Partial<SessionRecord>): Promise<void> {
     const data: Prisma.CouncilSessionUpdateInput = {};
     if (patch.status !== undefined) data.status = patch.status;
     if (patch.currentRound !== undefined)
@@ -330,18 +327,15 @@ export class PrismaSessionStore implements SessionStore {
     if (Object.keys(data).length > 0) {
       await this.client.councilSession.update({ where: { id }, data });
     }
-
-    const row = await this.client.councilSession.findUniqueOrThrow({
-      where: { id },
-      include: SESSION_INCLUDE,
-    });
-    return reassemble(row);
+    // No full-session re-read: every caller awaits this for its side effect
+    // only (the returned record was never used). Avoids an expensive
+    // findUniqueOrThrow + reassemble on every status transition.
   }
 
   async upsertProviderCall(
     id: string,
     call: ProviderCallRecord,
-  ): Promise<SessionRecord> {
+  ): Promise<void> {
     await this.client.providerCallLog.upsert({
       where: {
         sessionId_providerId_round: {
@@ -390,12 +384,8 @@ export class PrismaSessionStore implements SessionStore {
             : (call.parsedResponse as Prisma.InputJsonValue),
       },
     });
-
-    const row = await this.client.councilSession.findUniqueOrThrow({
-      where: { id },
-      include: SESSION_INCLUDE,
-    });
-    return reassemble(row);
+    // No full-session re-read (see update() above) — the upsert is fire-and-
+    // forget from the caller's perspective; status is read back via get().
   }
 
   async appendOpinion(id: string, op: ProviderOpinion): Promise<void> {

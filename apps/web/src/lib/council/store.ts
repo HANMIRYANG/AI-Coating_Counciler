@@ -134,11 +134,8 @@ export const MAX_RECENT_LIMIT = 100;
 export interface SessionStore {
   create(s: SessionRecord): Promise<void>;
   get(id: string): Promise<SessionRecord | undefined>;
-  update(id: string, patch: Partial<SessionRecord>): Promise<SessionRecord>;
-  upsertProviderCall(
-    id: string,
-    call: ProviderCallRecord,
-  ): Promise<SessionRecord>;
+  update(id: string, patch: Partial<SessionRecord>): Promise<void>;
+  upsertProviderCall(id: string, call: ProviderCallRecord): Promise<void>;
   appendOpinion(id: string, op: ProviderOpinion): Promise<void>;
   appendCritique(id: string, c: ProviderCritique): Promise<void>;
   appendAttempt(id: string, a: ProviderAttemptRecord): Promise<void>;
@@ -184,21 +181,16 @@ export class MemorySessionStore implements SessionStore {
     return this.map.get(id);
   }
 
-  async update(
-    id: string,
-    patch: Partial<SessionRecord>,
-  ): Promise<SessionRecord> {
+  async update(id: string, patch: Partial<SessionRecord>): Promise<void> {
     const cur = this.map.get(id);
     if (!cur) throw new Error(`session ${id} not found`);
-    const next = { ...cur, ...patch };
-    this.map.set(id, next);
-    return next;
+    this.map.set(id, { ...cur, ...patch });
   }
 
   async upsertProviderCall(
     id: string,
     call: ProviderCallRecord,
-  ): Promise<SessionRecord> {
+  ): Promise<void> {
     const cur = this.map.get(id);
     if (!cur) throw new Error(`session ${id} not found`);
     const idx = cur.providerCalls.findIndex(
@@ -207,7 +199,6 @@ export class MemorySessionStore implements SessionStore {
     if (idx === -1) cur.providerCalls.push(call);
     else cur.providerCalls[idx] = { ...cur.providerCalls[idx], ...call };
     this.map.set(id, cur);
-    return cur;
   }
 
   async appendOpinion(id: string, op: ProviderOpinion): Promise<void> {
