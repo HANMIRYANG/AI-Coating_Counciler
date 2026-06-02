@@ -14,6 +14,7 @@
 //      wired to a real sink in Phase 2).
 
 import type { ProviderId } from "./types";
+import { TimeoutError } from "./timeout";
 
 export type ProviderHealth =
   | "healthy"
@@ -84,8 +85,11 @@ export const DEFAULT_RATE_LIMITER_OPTIONS: RateLimiterOptions = {
 };
 
 type Waiter = {
-  run: () => void;
-  reject: (e: unknown) => void;
+  cancelled: boolean;
+  /** Granted a slot by releaseSlot (inFlight already incremented). */
+  grant: () => void;
+  /** Gave up (deadline / abort / cooldown) — rejects the acquire promise. */
+  cancel: (e: unknown) => void;
 };
 
 class SingleProviderLimiter {
@@ -185,7 +189,13 @@ class SingleProviderLimiter {
       );
     }
 
-    await this.acquireSlot();
+    // Slot acquisition is bounded by the SAME deadline/abort the caller uses
+    // for the call itself. Without this, a leaked/saturated slot (e.g. an
+    // in-process background task orphaned by a dev-server recompile that never
+    // ran its release) would queue new calls FOREVER — bypassing every
+    // per-call / round / session timeout. (Runs before the try/finally below,
+    // so a rejection here never wrongly releases a slot we never took.)
+    await this.acquireSlot(opts.deadlineMs, opts.abortSignal);
     const start = Date.now();
     let attempt = 0;
 
@@ -316,26 +326,67 @@ class SingleProviderLimiter {
     }
   }
 
-  private acquireSlot(): Promise<void> {
+  private acquireSlot(
+    deadlineMs?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (this.inFlight < this.opts.maxConcurrent) {
       this.inFlight += 1;
       return Promise.resolve();
     }
-    return new Promise((resolve, reject) => {
-      this.queue.push({
-        run: () => {
-          this.inFlight += 1;
+    if (signal?.aborted) {
+      return Promise.reject(new Error("aborted before slot acquisition"));
+    }
+    return new Promise<void>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+      };
+
+      const waiter: Waiter = {
+        cancelled: false,
+        // releaseSlot has already incremented inFlight for us.
+        grant: () => {
+          cleanup();
           resolve();
         },
-        reject,
-      });
+        cancel: (e: unknown) => {
+          if (waiter.cancelled) return;
+          waiter.cancelled = true;
+          cleanup();
+          reject(e);
+        },
+      };
+      this.queue.push(waiter);
+
+      if (signal) {
+        onAbort = () => waiter.cancel(new Error("aborted while queued"));
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+      if (deadlineMs !== undefined) {
+        const ms = Math.max(0, deadlineMs - Date.now());
+        timer = setTimeout(
+          () =>
+            waiter.cancel(
+              new TimeoutError(ms, `${this.providerId}:slot-acquire`),
+            ),
+          ms,
+        );
+      }
     });
   }
 
   private releaseSlot(): void {
     this.inFlight = Math.max(0, this.inFlight - 1);
-    const next = this.queue.shift();
-    if (next) next.run();
+    // Skip waiters that already gave up (deadline / abort).
+    let next = this.queue.shift();
+    while (next && next.cancelled) next = this.queue.shift();
+    if (next) {
+      this.inFlight += 1;
+      next.grant();
+    }
   }
 
   /**
@@ -349,7 +400,7 @@ class SingleProviderLimiter {
     const waiters = this.queue.slice();
     this.queue.length = 0;
     for (const w of waiters) {
-      w.reject(
+      w.cancel(
         this.buildRateLimitedError(
           `Provider ${this.providerId} entered cooldown while queued`,
           retryAfterMs,
