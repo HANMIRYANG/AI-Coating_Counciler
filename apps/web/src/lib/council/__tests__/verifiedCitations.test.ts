@@ -92,6 +92,18 @@ describe("buildVerifiedCitations", () => {
     expect(c.citationReady).toBe(false);
   });
 
+  it("is NOT citationReady for a contradictory guard (business-ready but not 'passed')", () => {
+    const c = buildVerifiedCitations(
+      input({
+        evidenceUsed: [ref({ chunkId: "a" })],
+        coveredClaims: [{ claim: "x", evidenceChunkIds: ["a"] }],
+        // businessCitationReady stays true but guardStatus is warning.
+        retrievalGuard: { ...passedGuard(), guardStatus: "warning" },
+      }),
+    );
+    expect(c.citationReady).toBe(false);
+  });
+
   it("dedupes evidence refs deterministically (same chunk → one ref, one label)", () => {
     const c = buildVerifiedCitations(
       input({
@@ -142,6 +154,37 @@ describe("buildVerifiedCitations", () => {
     expect(evRef).not.toHaveProperty("content");
     expect(evRef).not.toHaveProperty("snippet");
     expect(JSON.stringify(c)).not.toContain("secret-chunk-id");
+  });
+
+  it("exposes deterministic derived fields (labels + resolved flags)", () => {
+    const c = buildVerifiedCitations(
+      input({
+        evidenceUsed: [ref({ chunkId: "a" }), ref({ chunkId: "b", chunkIndex: 3 })],
+        coveredClaims: [
+          { claim: "주장1", evidenceChunkIds: ["a"] },
+          { claim: "주장2", evidenceChunkIds: ["b"] },
+        ],
+        uncoveredClaims: ["미연결"],
+        retrievalGuard: passedGuard(),
+      }),
+    );
+    expect(c.citationLabels).toEqual(["C1", "C2"]);
+    expect(c.evidenceLabels).toEqual(["E1", "E2"]);
+    expect(c.allCitedClaimsResolved).toBe(true);
+    expect(c.hasUnresolvedClaims).toBe(true);
+    // unresolved present → not ready despite resolved claims.
+    expect(c.citationReady).toBe(false);
+  });
+
+  it("allCitedClaimsResolved is false when a claim has no resolvable ref", () => {
+    const c = buildVerifiedCitations(
+      input({
+        evidenceUsed: [ref({ chunkId: "a" })],
+        coveredClaims: [{ claim: "x", evidenceChunkIds: ["missing"] }],
+        retrievalGuard: passedGuard(),
+      }),
+    );
+    expect(c.allCitedClaimsResolved).toBe(false);
   });
 
   it("older answers without a retrievalGuard are not citationReady (no crash)", () => {

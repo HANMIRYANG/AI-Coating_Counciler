@@ -34,10 +34,16 @@ export type VerifiedCitations = {
   // Dedup union of every CITED evidence ref, in label (first-appearance) order.
   evidenceRefs: CitationEvidenceRef[];
   unresolvedClaims: string[];
-  // true ONLY when the guard says business-citation-ready, every cited claim
-  // resolves to ≥1 evidenceUsed ref, AND there are no unresolved/uncovered
-  // claims.
+  // true ONLY when the guard verdict is passed + business-citation-ready, every
+  // cited claim resolves to ≥1 evidenceUsed ref, AND there are no unresolved/
+  // uncovered claims.
   citationReady: boolean;
+  // Derived flags (deterministic) for downstream integrity checks / UI.
+  hasUnresolvedClaims: boolean;
+  // Every cited claim resolves to ≥1 evidence ref (vacuously true with none).
+  allCitedClaimsResolved: boolean;
+  citationLabels: string[]; // ["C1", "C2", …]
+  evidenceLabels: string[]; // ["E1", "E2", …]
 };
 
 export type CitationInput = {
@@ -104,13 +110,32 @@ export function buildVerifiedCitations(
     (u) => u.trim().length > 0,
   );
 
+  const allCitedClaimsResolved = citedClaims.every(
+    (c) => c.evidence.length > 0,
+  );
+  const hasUnresolvedClaims = unresolvedClaims.length > 0;
+
   const citationReady =
     answer.retrievalGuard?.businessCitationReady === true &&
+    // Defensive: a valid guard always pairs businessCitationReady with
+    // guardStatus="passed", but stored/manual/legacy payloads may not — require
+    // BOTH so a contradictory verdict (e.g. blocked + businessCitationReady)
+    // never reads as ready.
+    answer.retrievalGuard?.guardStatus === "passed" &&
     citedClaims.length > 0 &&
-    citedClaims.every((c) => c.evidence.length > 0) &&
+    allCitedClaimsResolved &&
     // Defensive: never "ready" while any claim is still unresolved/uncovered,
     // even if a (legacy/manual) payload's guard says business-ready.
-    unresolvedClaims.length === 0;
+    !hasUnresolvedClaims;
 
-  return { citedClaims, evidenceRefs, unresolvedClaims, citationReady };
+  return {
+    citedClaims,
+    evidenceRefs,
+    unresolvedClaims,
+    citationReady,
+    hasUnresolvedClaims,
+    allCitedClaimsResolved,
+    citationLabels: citedClaims.map((c) => c.label),
+    evidenceLabels: evidenceRefs.map((e) => e.label),
+  };
 }

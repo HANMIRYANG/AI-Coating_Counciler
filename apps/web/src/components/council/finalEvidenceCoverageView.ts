@@ -11,6 +11,12 @@
 import type { FinalAnswer, GuardStatus } from "@/lib/council/schemas";
 import { GUARD_STATUS_LABEL } from "@/lib/council/retrievalGuard";
 import { buildVerifiedCitations } from "@/lib/council/verifiedCitations";
+import {
+  evaluateCitationIntegrity,
+  hasCitationIntegrityMaterial,
+  INTEGRITY_STATUS_LABEL,
+  type CitationIntegrityStatus,
+} from "@/lib/council/citationIntegrity";
 
 export type FinalCoverageTone = "good" | "info" | "muted" | "warn";
 
@@ -53,6 +59,24 @@ export type CitationsView = {
   unresolvedClaims: string[];
 };
 
+export type CitationIntegrityView = {
+  statusLabel: string;
+  tone: FinalCoverageTone;
+  issueCount: number; // total (problems + advisories)
+  problemCount: number;
+  advisoryCount: number;
+  recommendations: string[]; // combined (back-compat)
+  problemRecommendations: string[];
+  advisoryRecommendations: string[];
+  exportReady: boolean;
+};
+
+const INTEGRITY_TONE: Record<CitationIntegrityStatus, FinalCoverageTone> = {
+  ready: "good",
+  review_required: "warn",
+  blocked: "warn",
+};
+
 export type FinalEvidenceCoverageView = {
   // false for not_requested (ai_only) → quiet UI.
   visible: boolean;
@@ -67,6 +91,9 @@ export type FinalEvidenceCoverageView = {
   guard?: GuardView;
   // Verified-citation summary (present only when there are claims to cite).
   citations?: CitationsView;
+  // Citation integrity (review/export readiness) — present when there is a
+  // guard or any cited/uncovered claim to assess.
+  integrity?: CitationIntegrityView;
 };
 
 const GUARD_TONE: Record<GuardStatus, FinalCoverageTone> = {
@@ -116,7 +143,12 @@ type CoverageFields = Pick<
   | "coveredClaims"
   | "uncoveredClaims"
   | "retrievalGuard"
->;
+  | "finalMarkdown"
+> & {
+  // Standard answers only — used for the advisory inline-label check. Optional
+  // so ideation / certification answers (no businessReadyAnswer) still fit.
+  businessReadyAnswer?: string;
+};
 
 function buildGuardView(
   guard: FinalAnswer["retrievalGuard"],
@@ -161,6 +193,49 @@ function buildCitationsView(
   };
 }
 
+function buildIntegrityView(
+  answer: Partial<CoverageFields>,
+): CitationIntegrityView | undefined {
+  const coveredClaims = answer.coveredClaims ?? [];
+  const uncoveredClaims = answer.uncoveredClaims ?? [];
+  const vc = buildVerifiedCitations({
+    evidenceUsed: answer.evidenceUsed ?? [],
+    coveredClaims,
+    uncoveredClaims,
+    retrievalGuard: answer.retrievalGuard,
+  });
+  // Nothing citation-related to assess → no integrity block (quiet for a
+  // not_required guard with no cited/unresolved claims).
+  if (
+    !hasCitationIntegrityMaterial({
+      citedClaimCount: vc.citedClaims.length,
+      unresolvedClaimCount: vc.unresolvedClaims.length,
+      retrievalGuard: answer.retrievalGuard,
+    })
+  ) {
+    return undefined;
+  }
+  const r = evaluateCitationIntegrity({
+    businessReadyAnswer: answer.businessReadyAnswer,
+    finalMarkdown: answer.finalMarkdown,
+    evidenceUsed: answer.evidenceUsed ?? [],
+    coveredClaims,
+    uncoveredClaims,
+    retrievalGuard: answer.retrievalGuard,
+  });
+  return {
+    statusLabel: INTEGRITY_STATUS_LABEL[r.integrityStatus],
+    tone: INTEGRITY_TONE[r.integrityStatus],
+    issueCount: r.issues.length,
+    problemCount: r.problemCount,
+    advisoryCount: r.advisoryCount,
+    recommendations: r.recommendations,
+    problemRecommendations: r.problemRecommendations,
+    advisoryRecommendations: r.advisoryRecommendations,
+    exportReady: r.exportReady,
+  };
+}
+
 /**
  * Derive the coverage block view-model from a final answer.
  *
@@ -199,5 +274,6 @@ export function buildFinalEvidenceCoverageView(
     uncoveredClaims,
     guard: buildGuardView(answer?.retrievalGuard),
     citations: buildCitationsView(answer ?? {}),
+    integrity: buildIntegrityView(answer ?? {}),
   };
 }

@@ -17,6 +17,18 @@ import type {
   SynthesisResult,
 } from "./schemas";
 import { buildVerifiedCitations, type CitationInput } from "./verifiedCitations";
+import {
+  evaluateCitationIntegrity,
+  hasCitationIntegrityMaterial,
+  INTEGRITY_STATUS_LABEL,
+} from "./citationIntegrity";
+
+// Citation source = the validated mapping fields + (optional) prose for the
+// inline-label advisory check. All three answer shapes satisfy it.
+type CitationSource = CitationInput & {
+  businessReadyAnswer?: string;
+  finalMarkdown?: string;
+};
 
 // Minimal structural input — a completed session snapshot. `finalAnswer` is
 // required (the route returns 409 not_ready when it is absent).
@@ -97,7 +109,7 @@ function verifiedCitationsSection(a: CitationInput): string[] {
               ? cc.evidence
                   .map(
                     (e) =>
-                      `${e.title} (신뢰수준 ${e.trustLevel} · ${e.verificationStatus})`,
+                      `[${e.label}] ${e.title} (신뢰수준 ${e.trustLevel} · ${e.verificationStatus})`,
                   )
                   .join(", ")
               : "없음";
@@ -118,6 +130,69 @@ function verifiedCitationsSection(a: CitationInput): string[] {
     ...(c.unresolvedClaims.length > 0
       ? c.unresolvedClaims.map((u) => `- ${u}`)
       : ["- 없음"]),
+    "",
+  ];
+}
+
+// Deterministic "Citation Integrity" section, shared by all answer kinds.
+// Quiet when there is nothing citation-related to assess.
+function citationIntegritySection(a: CitationSource): string[] {
+  const c = buildVerifiedCitations(a);
+  if (
+    !hasCitationIntegrityMaterial({
+      citedClaimCount: c.citedClaims.length,
+      unresolvedClaimCount: c.unresolvedClaims.length,
+      retrievalGuard: a.retrievalGuard,
+    })
+  ) {
+    return [];
+  }
+  const r = evaluateCitationIntegrity({
+    businessReadyAnswer: a.businessReadyAnswer,
+    finalMarkdown: a.finalMarkdown,
+    evidenceUsed: a.evidenceUsed,
+    coveredClaims: a.coveredClaims,
+    uncoveredClaims: a.uncoveredClaims,
+    retrievalGuard: a.retrievalGuard,
+  });
+  const lines: string[] = [
+    "## 인용 무결성 점검 (Citation Integrity)",
+    "",
+    `- 상태: ${r.integrityStatus} (${INTEGRITY_STATUS_LABEL[r.integrityStatus]})`,
+    `- 내보내기 준비: ${r.exportReady ? "가능" : "검토 필요"}`,
+    `- 요약: ${r.summary}`,
+  ];
+  // Readiness-relevant problems (omit the heading entirely when there are none
+  // — advisory-only findings must never appear under "문제").
+  if (r.problemIssues.length > 0) {
+    lines.push("- 문제:");
+    lines.push(...r.problemIssues.map((i) => `  - [${i.code}] ${i.message}`));
+    if (r.problemRecommendations.length > 0) {
+      lines.push("- 권장 조치:");
+      lines.push(...r.problemRecommendations.map((rec) => `  - ${rec}`));
+    }
+  }
+  // Advisory inline-label notes (informational only).
+  if (r.advisoryIssues.length > 0) {
+    lines.push("- 자문:");
+    lines.push(...r.advisoryIssues.map((i) => `  - [${i.code}] ${i.message}`));
+  }
+  lines.push("");
+  return lines;
+}
+
+// Deduped evidence appendix (labels + filename#chunkIndex + trust/verification).
+// Never includes chunkId or raw body text. Quiet when no cited evidence.
+function evidenceAppendixSection(a: CitationSource): string[] {
+  const c = buildVerifiedCitations(a);
+  if (c.evidenceRefs.length === 0) return [];
+  return [
+    "## 근거 부록 (Evidence Appendix)",
+    "",
+    ...c.evidenceRefs.map(
+      (e) =>
+        `- [${e.label}] ${e.title} · 신뢰수준 ${e.trustLevel} · ${e.verificationStatus}`,
+    ),
     "",
   ];
 }
@@ -208,6 +283,8 @@ export function buildSessionMarkdown(session: ExportableSession): string {
     ...bulletList(a.uncoveredClaims),
     "",
     ...verifiedCitationsSection(a),
+    ...citationIntegritySection(a),
+    ...evidenceAppendixSection(a),
     "## Provider 요약",
     "",
     ...providerSummaryLines(a.providerSummary),
@@ -305,6 +382,8 @@ function buildIdeationMarkdown(
     ...bulletList(a.uncoveredClaims),
     "",
     ...verifiedCitationsSection(a),
+    ...citationIntegritySection(a),
+    ...evidenceAppendixSection(a),
     "## Provider 요약",
     "",
     ...providerSummaryLines(a.providerSummary),
@@ -392,6 +471,8 @@ function buildChecklistMarkdown(
     ...bulletList(a.uncoveredClaims),
     "",
     ...verifiedCitationsSection(a),
+    ...citationIntegritySection(a),
+    ...evidenceAppendixSection(a),
     "## Provider 요약",
     "",
     ...providerSummaryLines(a.providerSummary),

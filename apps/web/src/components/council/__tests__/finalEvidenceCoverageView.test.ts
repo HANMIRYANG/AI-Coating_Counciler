@@ -208,3 +208,99 @@ describe("buildFinalEvidenceCoverageView — verified citations", () => {
     expect(view.citations).toBeUndefined();
   });
 });
+
+describe("buildFinalEvidenceCoverageView — citation integrity", () => {
+  it("integrity ready (good tone, exportReady) with a business-ready guard", () => {
+    const view = buildFinalEvidenceCoverageView({
+      ...coverage({
+        evidenceCoverageStatus: "sufficient",
+        evidenceUsed: [ref],
+        coveredClaims: [{ claim: "x", evidenceChunkIds: ["chunk_SECRET"] }],
+      }),
+      finalMarkdown: "본문 [C1]",
+      retrievalGuard: {
+        guardStatus: "passed",
+        reasons: [],
+        requiredEvidence: true,
+        businessCitationReady: true,
+        recommendedAction: "발송 가능",
+      },
+    });
+    expect(view.integrity).toBeDefined();
+    expect(view.integrity?.statusLabel).toBe("양호");
+    expect(view.integrity?.tone).toBe("good");
+    expect(view.integrity?.exportReady).toBe(true);
+    // body "[C1]" matches the single generated label → no advisory, no problem.
+    expect(view.integrity?.problemCount).toBe(0);
+    expect(view.integrity?.advisoryCount).toBe(0);
+  });
+
+  it("integrity stays ready (good) with advisory-only inline-label findings", () => {
+    const view = buildFinalEvidenceCoverageView({
+      ...coverage({
+        evidenceCoverageStatus: "sufficient",
+        evidenceUsed: [ref],
+        coveredClaims: [{ claim: "x", evidenceChunkIds: ["chunk_SECRET"] }],
+      }),
+      finalMarkdown: "라벨 없는 본문", // no [C#]
+      retrievalGuard: {
+        guardStatus: "passed",
+        reasons: [],
+        requiredEvidence: true,
+        businessCitationReady: true,
+        recommendedAction: "발송 가능",
+      },
+    });
+    expect(view.integrity?.statusLabel).toBe("양호");
+    expect(view.integrity?.tone).toBe("good");
+    expect(view.integrity?.exportReady).toBe(true);
+    expect(view.integrity?.problemCount).toBe(0);
+    expect(view.integrity?.advisoryCount).toBeGreaterThan(0);
+    expect(view.integrity?.advisoryRecommendations.length).toBeGreaterThan(0);
+    expect(view.integrity?.problemRecommendations).toHaveLength(0);
+  });
+
+  it("integrity review_required for a legacy answer without a guard", () => {
+    const view = buildFinalEvidenceCoverageView(
+      coverage({
+        evidenceCoverageStatus: "partial",
+        evidenceUsed: [ref],
+        coveredClaims: [{ claim: "x", evidenceChunkIds: ["chunk_SECRET"] }],
+      }),
+    );
+    expect(view.integrity?.statusLabel).toBe("검토 필요");
+    expect(view.integrity?.tone).toBe("warn");
+    expect(view.integrity?.exportReady).toBe(false);
+    expect(view.integrity?.issueCount).toBeGreaterThan(0);
+    expect(view.integrity?.problemCount).toBeGreaterThan(0);
+  });
+
+  it("omits integrity for a not_required guard with no cited/unresolved claims", () => {
+    const view = buildFinalEvidenceCoverageView({
+      ...coverage({ evidenceCoverageStatus: "partial", coveredClaims: [], uncoveredClaims: [] }),
+      retrievalGuard: {
+        guardStatus: "not_required",
+        reasons: [],
+        requiredEvidence: false,
+        businessCitationReady: false,
+        recommendedAction: "",
+      },
+    });
+    expect(view.integrity).toBeUndefined();
+  });
+
+  it("integrity blocked when guard is blocked", () => {
+    const view = buildFinalEvidenceCoverageView({
+      ...coverage({ evidenceCoverageStatus: "no_evidence", uncoveredClaims: ["근거 필요"] }),
+      retrievalGuard: {
+        guardStatus: "blocked",
+        reasons: ["근거 없음"],
+        requiredEvidence: true,
+        businessCitationReady: false,
+        recommendedAction: "발송 금지",
+      },
+    });
+    expect(view.integrity?.statusLabel).toBe("차단");
+    expect(view.integrity?.exportReady).toBe(false);
+  });
+});

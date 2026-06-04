@@ -25,7 +25,8 @@ export function FinalEvidenceCoveragePanel({
     | "coveredClaims"
     | "uncoveredClaims"
     | "retrievalGuard"
-  >;
+    | "finalMarkdown"
+  > & { businessReadyAnswer?: string };
 }) {
   const view = buildFinalEvidenceCoverageView(answer);
   // not_requested (ai_only) → quiet UI, render nothing.
@@ -121,7 +122,7 @@ export function FinalEvidenceCoveragePanel({
                       ? c.evidence
                           .map(
                             (e) =>
-                              `${e.title} (${e.trustLevel}·${e.verificationStatus})`,
+                              `[${e.label}] ${e.title} (${e.trustLevel}·${e.verificationStatus})`,
                           )
                           .join(", ")
                       : "없음"}
@@ -131,6 +132,41 @@ export function FinalEvidenceCoveragePanel({
             </ul>
           )}
         </>
+      )}
+
+      {view.integrity && (
+        <p>
+          <b>
+            인용 무결성{" "}
+            <span
+              className={`badge evidence-coverage-${view.integrity.tone}`}
+            >
+              {view.integrity.statusLabel}
+            </span>
+          </b>
+          <span className="muted">
+            {" "}
+            · 내보내기 {view.integrity.exportReady ? "가능" : "검토 필요"}
+            {view.integrity.problemCount > 0
+              ? ` · 문제 ${view.integrity.problemCount}건`
+              : ""}
+            {view.integrity.advisoryCount > 0
+              ? ` · 자문 ${view.integrity.advisoryCount}건`
+              : ""}
+          </span>
+          {view.integrity.problemRecommendations.length > 0 && (
+            <span className="muted">
+              {" "}
+              — {view.integrity.problemRecommendations.join(" / ")}
+            </span>
+          )}
+          {view.integrity.advisoryRecommendations.length > 0 && (
+            <span className="muted">
+              {" "}
+              · 자문: {view.integrity.advisoryRecommendations.join(" / ")}
+            </span>
+          )}
+        </p>
       )}
 
       <p className="muted">

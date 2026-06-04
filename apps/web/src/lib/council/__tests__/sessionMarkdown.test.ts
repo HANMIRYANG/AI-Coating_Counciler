@@ -159,7 +159,11 @@ describe("buildSessionMarkdown", () => {
   });
 
   it("omits the guard section when absent (backward compatible)", () => {
-    expect(buildSessionMarkdown(session())).not.toContain("근거 가드");
+    // The Retrieval Guard *section* header must be absent; integrity prose may
+    // mention "근거 가드" in a recommendation, so match the section header.
+    expect(buildSessionMarkdown(session())).not.toContain(
+      "### 근거 가드 (Retrieval Guard)",
+    );
   });
 
   it("renders a Verified Citations section with labeled claim→evidence", () => {
@@ -168,7 +172,7 @@ describe("buildSessionMarkdown", () => {
     expect(md).toContain("## 검증된 인용 (Verified Citations)");
     expect(md).toContain("- 인용 준비 상태: 검토 필요");
     expect(md).toContain(
-      "- [C1] 방오 성능 검토 가능 — 근거: kcl-report.md#0 (신뢰수준 uploaded_copy · auto_extracted)",
+      "- [C1] 방오 성능 검토 가능 — 근거: [E1] kcl-report.md#0 (신뢰수준 uploaded_copy · auto_extracted)",
     );
     expect(md).toContain("### 근거 미연결 주장");
     expect(md).toContain("- 장기 신뢰성 데이터");
@@ -202,6 +206,102 @@ describe("buildSessionMarkdown", () => {
       }),
     );
     expect(empty).not.toContain("검증된 인용");
+  });
+
+  it("renders the Citation Integrity section", () => {
+    // Default fixture has covered/uncovered claims and NO retrievalGuard.
+    expect(md).toContain("## 인용 무결성 점검 (Citation Integrity)");
+    expect(md).toContain("- 상태: review_required (검토 필요)");
+    expect(md).toContain("- 내보내기 준비: 검토 필요");
+    expect(md).toContain("[unguarded_legacy_answer]");
+  });
+
+  it("renders the Evidence Appendix with labels + filename#chunkIndex (no chunkId)", () => {
+    expect(md).toContain("## 근거 부록 (Evidence Appendix)");
+    expect(md).toContain(
+      "- [E1] kcl-report.md#0 · 신뢰수준 uploaded_copy · auto_extracted",
+    );
+    expect(md).not.toContain("chunk_SECRET");
+  });
+
+  it("omits integrity + appendix for older answers with no claims and no guard", () => {
+    const bare = buildSessionMarkdown(
+      session({
+        finalAnswer: finalAnswer({
+          coveredClaims: [],
+          uncoveredClaims: [],
+          evidenceUsed: [],
+        }),
+      }),
+    );
+    expect(bare).not.toContain("인용 무결성 점검");
+    expect(bare).not.toContain("근거 부록");
+  });
+
+  it("stays quiet for a not_required guard with no cited/unresolved claims", () => {
+    const quiet = buildSessionMarkdown(
+      session({
+        finalAnswer: finalAnswer({
+          coveredClaims: [],
+          uncoveredClaims: [],
+          evidenceUsed: [],
+          retrievalGuard: {
+            guardStatus: "not_required",
+            reasons: [],
+            requiredEvidence: false,
+            businessCitationReady: false,
+            recommendedAction: "",
+          },
+        }),
+      }),
+    );
+    expect(quiet).not.toContain("인용 무결성 점검");
+  });
+
+  it("renders advisory inline-label findings under 자문, not 문제", () => {
+    const advisoryOnly = buildSessionMarkdown(
+      session({
+        finalAnswer: finalAnswer({
+          evidenceCoverageStatus: "sufficient",
+          uncoveredClaims: [],
+          // finalMarkdown "# 결론" / businessReadyAnswer carry no [C1] labels.
+          retrievalGuard: {
+            guardStatus: "passed",
+            reasons: [],
+            requiredEvidence: true,
+            businessCitationReady: true,
+            recommendedAction: "발송 가능",
+          },
+        }),
+      }),
+    );
+    expect(advisoryOnly).toContain("## 인용 무결성 점검 (Citation Integrity)");
+    expect(advisoryOnly).toContain("- 상태: ready (양호)");
+    expect(advisoryOnly).toContain("- 자문:");
+    expect(advisoryOnly).toContain("[body_has_no_citation_labels]");
+    // advisory-only → no "문제" heading
+    expect(advisoryOnly).not.toContain("- 문제:");
+  });
+
+  it("still renders integrity for a blocked guard even with no claims", () => {
+    const blocked = buildSessionMarkdown(
+      session({
+        finalAnswer: finalAnswer({
+          coveredClaims: [],
+          uncoveredClaims: [],
+          evidenceUsed: [],
+          retrievalGuard: {
+            guardStatus: "blocked",
+            reasons: ["근거 없음"],
+            requiredEvidence: true,
+            businessCitationReady: false,
+            recommendedAction: "발송 금지",
+          },
+        }),
+      }),
+    );
+    expect(blocked).toContain("## 인용 무결성 점검 (Citation Integrity)");
+    expect(blocked).toContain("- 상태: blocked (차단)");
   });
 });
 
