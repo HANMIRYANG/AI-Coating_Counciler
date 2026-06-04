@@ -21,6 +21,8 @@ import { getPrismaClient } from "../db";
 import { chunkText, type Chunk } from "./chunker";
 import type { CreateDocumentRequest, DocumentMetadata } from "./schemas";
 import { toOriginalBlobMetadata } from "./blobStorage";
+import { isParseableMime } from "./extract";
+import { isOcrSupportedMime } from "./ocr";
 import {
   buildChunkWhere,
   clampSearchLimit,
@@ -34,7 +36,9 @@ import {
 
 export type DocumentServiceErrorCode =
   | "database_unavailable"
-  | "internal_error";
+  | "internal_error"
+  | "not_found"
+  | "not_extractable";
 
 export class DocumentServiceError extends Error {
   constructor(
@@ -60,6 +64,20 @@ export type DocumentSummary = {
   createdAt: number;
 };
 
+export type DocumentOriginalForExtraction = {
+  id: string;
+  filename: string;
+  originalName: string;
+  mimeType: string;
+  category: string | null;
+  version: string | null;
+  metadata: DocumentMetadata | null;
+  originalBlobUrl: string;
+  originalBlobPath: string | null;
+  originalBlobContentType: string | null;
+  originalBlobSizeBytes: number | null;
+};
+
 const LIST_DEFAULT_LIMIT = 20;
 const LIST_MAX_LIMIT = 100;
 
@@ -68,6 +86,10 @@ function clampListLimit(value: number | undefined): number {
   const n = Math.floor(value);
   if (n <= 0) return LIST_DEFAULT_LIMIT;
   return Math.min(n, LIST_MAX_LIMIT);
+}
+
+export function canExtractOriginalMime(mimeType: string): boolean {
+  return isParseableMime(mimeType) || isOcrSupportedMime(mimeType);
 }
 
 // Translate raw Prisma / driver errors into typed service errors. Anything
@@ -269,8 +291,12 @@ export class DocumentService {
           mimeType: input.contentType,
           sizeBytes: input.sizeBytes,
           // Distinct status so these binary originals are never mistaken for
-          // the chunked text intake path.
-          status: "original_uploaded",
+          // the chunked text intake path. Extractable originals are queued
+          // lazily: they are not OCR'd at registration time, but can be
+          // promoted to `chunked` through the on-demand extraction route.
+          status: canExtractOriginalMime(input.contentType)
+            ? "needs_extraction"
+            : "original_uploaded",
           originalBlobUrl: meta.originalBlobUrl,
           originalBlobPath: meta.originalBlobPath,
           originalBlobSizeBytes: meta.originalBlobSizeBytes,
@@ -280,6 +306,107 @@ export class DocumentService {
         select: { id: true },
       });
       return { id: created.id };
+    } catch (err) {
+      wrapDbError(err);
+    }
+  }
+
+  async getOriginalForExtraction(
+    id: string,
+  ): Promise<DocumentOriginalForExtraction> {
+    try {
+      const row = await this.prisma.document.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          filename: true,
+          originalName: true,
+          mimeType: true,
+          category: true,
+          version: true,
+          metadata: true,
+          originalBlobUrl: true,
+          originalBlobPath: true,
+          originalBlobContentType: true,
+          originalBlobSizeBytes: true,
+        },
+      });
+      if (!row) {
+        throw new DocumentServiceError(
+          "not_found",
+          `document ${id} not found`,
+        );
+      }
+      if (!row.originalBlobUrl) {
+        throw new DocumentServiceError(
+          "not_extractable",
+          `document ${id} does not have an original Blob file`,
+        );
+      }
+      const mimeType = row.originalBlobContentType ?? row.mimeType;
+      if (!canExtractOriginalMime(mimeType)) {
+        throw new DocumentServiceError(
+          "not_extractable",
+          `mimeType '${mimeType}' is not supported for on-demand extraction`,
+        );
+      }
+      return {
+        id: row.id,
+        filename: row.filename,
+        originalName: row.originalName,
+        mimeType: row.mimeType,
+        category: row.category,
+        version: row.version,
+        metadata: (row.metadata as DocumentMetadata | null) ?? null,
+        originalBlobUrl: row.originalBlobUrl,
+        originalBlobPath: row.originalBlobPath,
+        originalBlobContentType: row.originalBlobContentType,
+        originalBlobSizeBytes: row.originalBlobSizeBytes,
+      };
+    } catch (err) {
+      if (err instanceof DocumentServiceError) throw err;
+      wrapDbError(err);
+    }
+  }
+
+  async attachExtractedTextToOriginal(input: {
+    id: string;
+    content: string;
+    category?: string;
+    metadata?: DocumentMetadata;
+  }): Promise<{ id: string; chunkCount: number }> {
+    const chunks: Chunk[] = chunkText(input.content);
+    if (chunks.length === 0) {
+      throw new DocumentServiceError(
+        "internal_error",
+        "chunker produced 0 chunks from non-empty extracted content",
+      );
+    }
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.documentChunk.deleteMany({
+          where: { documentId: input.id },
+        });
+        await tx.document.update({
+          where: { id: input.id },
+          data: {
+            category: input.category ?? null,
+            status: "chunked",
+            metadata: input.metadata
+              ? (input.metadata as Prisma.InputJsonValue)
+              : Prisma.DbNull,
+            chunks: {
+              create: chunks.map((c) => ({
+                chunkIndex: c.index,
+                content: c.content,
+                pageNumber: c.pageNumber ?? null,
+              })),
+            },
+          },
+        });
+      });
+      return { id: input.id, chunkCount: chunks.length };
     } catch (err) {
       wrapDbError(err);
     }

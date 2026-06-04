@@ -3,10 +3,13 @@ import {
   DocumentExtractError,
   MAX_EXTRACTED_CHARS,
   extractDocumentText,
+  extractDocumentTextWithOcrFallback,
+  extractErrorToStatus,
   inferMimeFromFilename,
   isParseableMime,
   type Extractors,
 } from "../extract";
+import { DocumentOcrError, type OcrEngine } from "../ocr";
 
 const PDF = "application/pdf";
 const DOCX =
@@ -33,6 +36,12 @@ function stub(opts: {
 }
 
 const buf = Buffer.from("dummy");
+
+const ocr = (text: string): OcrEngine => async () => ({
+  text,
+  pageCount: 2,
+  provider: "google_document_ai",
+});
 
 describe("extractDocumentText", () => {
   it("extracts PDF text + page count", async () => {
@@ -93,6 +102,65 @@ describe("extractDocumentText", () => {
   });
 });
 
+describe("extractDocumentTextWithOcrFallback", () => {
+  it("keeps text-layer PDF extraction as the first path", async () => {
+    let ocrCalled = false;
+    const r = await extractDocumentTextWithOcrFallback(buf, PDF, {
+      extractors: stub({ pdfText: "text layer", pdfPages: 1 }),
+      ocr: async () => {
+        ocrCalled = true;
+        return { text: "ocr", provider: "google_document_ai" };
+      },
+    });
+    expect(r.text).toBe("text layer");
+    expect(r.extractionMethod).toBe("text_layer");
+    expect(ocrCalled).toBe(false);
+  });
+
+  it("falls back to OCR when a PDF has no text layer", async () => {
+    const r = await extractDocumentTextWithOcrFallback(buf, PDF, {
+      extractors: stub({ pdfText: "   " }),
+      ocr: ocr("OCR 본문"),
+    });
+    expect(r.text).toBe("OCR 본문");
+    expect(r.kind).toBe("pdf");
+    expect(r.pageCount).toBe(2);
+    expect(r.extractionMethod).toBe("ocr");
+    expect(r.ocrProvider).toBe("google_document_ai");
+  });
+
+  it("runs OCR directly for supported images", async () => {
+    const r = await extractDocumentTextWithOcrFallback(buf, "image/png", {
+      extractors: stub({}),
+      ocr: ocr("이미지 OCR"),
+    });
+    expect(r.kind).toBe("image");
+    expect(r.text).toBe("이미지 OCR");
+    expect(r.extractionMethod).toBe("ocr");
+  });
+
+  it("maps disabled OCR to ocr_unavailable", async () => {
+    const err = await extractDocumentTextWithOcrFallback(buf, PDF, {
+      extractors: stub({ pdfText: "" }),
+      ocr: async () => {
+        throw new DocumentOcrError("disabled", "disabled");
+      },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DocumentExtractError);
+    expect(err.code).toBe("ocr_unavailable");
+  });
+});
+
+describe("extractErrorToStatus", () => {
+  it("maps every error code to the shared HTTP status", () => {
+    expect(extractErrorToStatus("unsupported_type")).toBe(415);
+    expect(extractErrorToStatus("ocr_unavailable")).toBe(503);
+    expect(extractErrorToStatus("ocr_failed")).toBe(502);
+    expect(extractErrorToStatus("no_text_extracted")).toBe(422);
+    expect(extractErrorToStatus("parse_failed")).toBe(422);
+  });
+});
+
 describe("mime helpers", () => {
   it("isParseableMime recognizes pdf/docx only", () => {
     expect(isParseableMime(PDF)).toBe(true);
@@ -104,6 +172,7 @@ describe("mime helpers", () => {
   it("inferMimeFromFilename maps extensions", () => {
     expect(inferMimeFromFilename("report.PDF")).toBe(PDF);
     expect(inferMimeFromFilename("memo.docx")).toBe(DOCX);
+    expect(inferMimeFromFilename("scan.PNG")).toBe("image/png");
     expect(inferMimeFromFilename("notes.txt")).toBeUndefined();
   });
 });

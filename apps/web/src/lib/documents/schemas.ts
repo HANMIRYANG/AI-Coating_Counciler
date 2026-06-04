@@ -67,6 +67,8 @@ export const DocumentMetadataSchema = z.object({
   substrate: z.string().max(255).optional(),
   coatingThickness: z.string().max(64).optional(),
   temperatureCondition: z.string().max(255).optional(),
+  extractionMethod: z.enum(["text_layer", "ocr"]).optional(),
+  ocrProvider: z.enum(["google_document_ai"]).optional(),
 });
 export type DocumentMetadata = z.infer<typeof DocumentMetadataSchema>;
 

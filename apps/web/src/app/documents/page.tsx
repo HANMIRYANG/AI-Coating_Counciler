@@ -2,18 +2,30 @@
 
 // 내부 기술자료 관리 (/documents)
 //
-// text/plain · text/markdown 문서를 업로드(POST /api/documents)하고, 목록
-// (GET /api/documents)과 키워드 검색(GET /api/documents/search)을 제공한다.
+// 업로드 경로 3종:
+//   1) 인라인 텍스트  : text/plain · text/markdown (POST /api/documents, ≤256KB)
+//   2) 파일 추출      : PDF/DOCX/이미지 → text-layer 추출 + OCR fallback
+//                       (POST /api/documents/parse, 소형 파일용)
+//   3) 대용량 원본    : 브라우저 → Vercel Blob 직접 업로드 후 지연 추출
+//                       (POST /api/documents/blob/upload → POST /api/documents/:id/extract)
+// 그리고 목록(GET /api/documents) · 키워드 검색(GET /api/documents/search).
 // 이 경로는 Prisma(Postgres) 전용이라 DB 미구성 시 API 가 503 을 반환하며,
 // 이 화면은 그 메시지를 그대로 노출한다.
 //
-// PDF/DOCX(Blob) 업로드, 문서 삭제/수정은 이번 범위 밖(별도 작업).
+// 문서 삭제/수정, 임베딩·벡터(의미 기반) 검색은 이번 범위 밖(별도 작업).
 //
 // 서버 전용 모듈(@prisma/client 를 끌어오는 service.ts/search.ts)을 client
-// 번들에 넣지 않기 위해 응답 타입은 로컬에 다시 선언한다.
+// 번들에 넣지 않기 위해 응답 타입은 로컬에 다시 선언한다. blobStorage 는 zod
+// 만 의존하는 순수 헬퍼라 클라이언트 번들에 안전하게 포함된다.
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { upload } from "@vercel/blob/client";
 import { AppShell } from "@/components/design/CouncilDesign";
+import {
+  MAX_ORIGINAL_BLOB_BYTES,
+  buildOriginalBlobPathname,
+  isSupportedOriginalMime,
+} from "@/lib/documents/blobStorage";
 
 // EvidenceDocumentType 값과 동일(빈 값 = 미지정). 서버 Zod 를 import 하지
 // 않도록 client 측에 고정 목록으로 둔다.
@@ -92,16 +104,25 @@ export default function DocumentsPage() {
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  // ── PDF/DOCX 파싱 업로드 ───────────────────────────────────
+  // ── 파일 추출 업로드 (PDF/DOCX/이미지, 인라인 parse) ────────
   const [file, setFile] = useState<File | null>(null);
   const [parsing, setParsing] = useState(false);
   const [parseMsg, setParseMsg] = useState<string | null>(null);
   const [parseErr, setParseErr] = useState<string | null>(null);
 
+  // ── 대용량 원본 업로드 (Vercel Blob client-upload) ─────────
+  const [blobFile, setBlobFile] = useState<File | null>(null);
+  const [blobUploading, setBlobUploading] = useState(false);
+  const [blobMsg, setBlobMsg] = useState<string | null>(null);
+  const [blobErr, setBlobErr] = useState<string | null>(null);
+
   // ── 목록 ───────────────────────────────────────────────────
   const [docs, setDocs] = useState<DocSummary[]>([]);
   const [listErr, setListErr] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(true);
+  const [extractingId, setExtractingId] = useState<string | null>(null);
+  const [extractMsg, setExtractMsg] = useState<string | null>(null);
+  const [extractErr, setExtractErr] = useState<string | null>(null);
 
   // ── 검색 ───────────────────────────────────────────────────
   const [q, setQ] = useState("");
@@ -195,8 +216,9 @@ export default function DocumentsPage() {
       if (!res.ok) {
         throw new Error(json?.message ?? json?.error ?? `HTTP ${res.status}`);
       }
+      const method = json.extractionMethod === "ocr" ? "OCR" : "텍스트 레이어";
       setParseMsg(
-        `추출 완료 — ${json.kind?.toUpperCase() ?? ""} · 청크 ${json.chunkCount ?? "?"}개 · ${json.extractedChars ?? "?"}자` +
+        `추출 완료 — ${json.kind?.toUpperCase() ?? ""} · 방식: ${method} · 청크 ${json.chunkCount ?? "?"}개 · ${json.extractedChars ?? "?"}자` +
           (json.pageCount ? ` · ${json.pageCount}p` : ""),
       );
       setFile(null);
@@ -205,6 +227,79 @@ export default function DocumentsPage() {
       setParseErr(errMessage(e));
     } finally {
       setParsing(false);
+    }
+  }
+
+  async function submitBlobUpload() {
+    if (blobUploading) return;
+    setBlobErr(null);
+    setBlobMsg(null);
+    if (!blobFile) {
+      setBlobErr("업로드할 원본 파일을 선택하세요.");
+      return;
+    }
+    // 토큰 발급 전 클라이언트에서 형식/크기를 미리 검증(서버
+    // validateOriginalUpload 와 동일한 계약).
+    if (!isSupportedOriginalMime(blobFile.type)) {
+      setBlobErr(
+        `지원하지 않는 형식입니다(${blobFile.type || "알 수 없음"}). PDF/DOCX/이미지(PNG·JPEG·TIFF)를 선택하세요.`,
+      );
+      return;
+    }
+    if (blobFile.size > MAX_ORIGINAL_BLOB_BYTES) {
+      setBlobErr(
+        `파일이 너무 큽니다(${(blobFile.size / 1024 / 1024).toFixed(1)}MB > ${(MAX_ORIGINAL_BLOB_BYTES / 1024 / 1024).toFixed(0)}MB).`,
+      );
+      return;
+    }
+    setBlobUploading(true);
+    try {
+      await upload(buildOriginalBlobPathname(blobFile.name), blobFile, {
+        access: "private",
+        handleUploadUrl: "/api/documents/blob/upload",
+        clientPayload: JSON.stringify({
+          filename: blobFile.name,
+          contentType: blobFile.type,
+          sizeBytes: blobFile.size,
+        }),
+      });
+      setBlobMsg(
+        "업로드 완료. Vercel 환경에서는 자동 등록(onUploadCompleted) 후 아래 목록에 " +
+          "needs_extraction 상태로 나타나며 '추출/OCR' 로 추출합니다. 로컬 개발 서버에서는 " +
+          "등록 웹훅이 발화하지 않아 목록에 나타나지 않습니다(대용량 경로는 Vercel 프리뷰에서 검증).",
+      );
+      setBlobFile(null);
+      await loadList();
+    } catch (e) {
+      setBlobErr(errMessage(e));
+    } finally {
+      setBlobUploading(false);
+    }
+  }
+
+  async function runLazyExtract(id: string) {
+    if (extractingId) return;
+    setExtractingId(id);
+    setExtractErr(null);
+    setExtractMsg(null);
+    try {
+      const res = await fetch(`/api/documents/${encodeURIComponent(id)}/extract`, {
+        method: "POST",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.message ?? json?.error ?? `HTTP ${res.status}`);
+      }
+      setExtractMsg(
+        `청크 ${json.chunkCount ?? "?"}개 추출됨 (방식: ${
+          json.extractionMethod === "ocr" ? "OCR" : "텍스트 레이어"
+        })`,
+      );
+      await loadList();
+    } catch (e) {
+      setExtractErr(errMessage(e));
+    } finally {
+      setExtractingId(null);
     }
   }
 
@@ -238,6 +333,14 @@ export default function DocumentsPage() {
   const setMetaField = (k: keyof DocMeta, v: string) =>
     setMeta((m) => ({ ...m, [k]: v }));
 
+  const canRunLazyExtract = (d: DocSummary) =>
+    d.status === "needs_extraction" ||
+    (d.chunkCount === 0 &&
+      (d.mimeType === "application/pdf" ||
+        d.mimeType ===
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+        d.mimeType.startsWith("image/")));
+
   return (
     <AppShell
       active="docs"
@@ -257,7 +360,8 @@ export default function DocumentsPage() {
             <p className="readiness-note">
               ※ 이 화면은 Postgres(Prisma) 연결이 필요합니다. DB 미구성 시
               아래 작업은 <code>database_unavailable(503)</code> 로 안내됩니다.
-              PDF/DOCX 업로드와 문서 삭제는 아직 지원하지 않습니다.
+              PDF/DOCX/이미지 추출 업로드를 지원합니다. 문서 삭제/수정과
+              임베딩·벡터(의미 기반) 검색은 아직 지원하지 않습니다.
             </p>
           </div>
 
@@ -394,10 +498,10 @@ export default function DocumentsPage() {
                 paddingTop: 10,
               }}
             >
-              <span className="muted">또는 PDF/DOCX 자동 추출:</span>
+              <span className="muted">또는 파일 추출 (PDF/DOCX/이미지):</span>
               <input
                 type="file"
-                accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                accept=".pdf,.docx,.png,.jpg,.jpeg,.webp,.tiff,.tif,.gif,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp,image/tiff,image/gif"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 disabled={parsing}
               />
@@ -414,12 +518,56 @@ export default function DocumentsPage() {
               )}
             </div>
             <p className="readiness-note">
-              PDF/DOCX는 서버에서 텍스트 레이어만 추출합니다(OCR 미지원).
-              위 메타데이터는 두 방식 모두에 적용됩니다.
+              PDF/DOCX는 텍스트 레이어를 우선 추출하고, 텍스트가 없으면 OCR로
+              대체합니다. 이미지는 OCR로 처리합니다(OCR은 서버에
+              <code>DOCUMENT_OCR_PROVIDER</code> 설정 필요 — 미설정 시 503으로
+              안내). 위 메타데이터는 텍스트/파일 추출 업로드에 적용됩니다.
             </p>
             {parseErr && (
               <div className="form-error" role="alert">
                 추출 실패: {parseErr}
+              </div>
+            )}
+
+            {/* ── 대용량 원본 업로드 (Vercel Blob) ─────────────── */}
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                flexWrap: "wrap",
+                borderTop: "1px solid var(--line, #ddd)",
+                paddingTop: 10,
+              }}
+            >
+              <span className="muted">대용량 원본 업로드 (Blob):</span>
+              <input
+                type="file"
+                accept=".pdf,.docx,.png,.jpg,.jpeg,.tiff,.tif,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/tiff"
+                onChange={(e) => setBlobFile(e.target.files?.[0] ?? null)}
+                disabled={blobUploading}
+              />
+              <button
+                className="btn"
+                type="button"
+                onClick={submitBlobUpload}
+                disabled={blobUploading || !blobFile}
+              >
+                {blobUploading ? "업로드 중..." : "원본 업로드"}
+              </button>
+            </div>
+            <p className="readiness-note">
+              4.5MB를 초과하는 대용량 원본(PDF/DOCX/이미지, ≤25MB)은 이 경로로
+              브라우저에서 Vercel Blob에 직접 업로드한 뒤, 목록에서
+              <b> 추출/OCR</b>로 텍스트를 추출합니다(<code>BLOB_READ_WRITE_TOKEN</code>
+              필요). 이 경로에는 위 메타데이터가 적용되지 않습니다.
+            </p>
+            {blobMsg && (
+              <div style={{ color: "var(--ok, #2a7)" }}>{blobMsg}</div>
+            )}
+            {blobErr && (
+              <div className="form-error" role="alert">
+                원본 업로드 실패: {blobErr}
               </div>
             )}
           </form>
@@ -481,6 +629,16 @@ export default function DocumentsPage() {
               목록 로드 실패: {listErr}
             </div>
           )}
+          {extractMsg && (
+            <div style={{ color: "var(--ok, #2a7)", marginBottom: 8 }}>
+              {extractMsg}
+            </div>
+          )}
+          {extractErr && (
+            <div className="form-error" role="alert">
+              추출/OCR 실패: {extractErr}
+            </div>
+          )}
           {!listLoading && !listErr && docs.length === 0 && (
             <p className="muted">아직 업로드된 문서가 없습니다.</p>
           )}
@@ -494,6 +652,8 @@ export default function DocumentsPage() {
                     <th style={{ padding: 6 }}>기관</th>
                     <th style={{ padding: 6 }}>청크</th>
                     <th style={{ padding: 6 }}>크기</th>
+                    <th style={{ padding: 6 }}>상태</th>
+                    <th style={{ padding: 6 }}>작업</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -512,6 +672,23 @@ export default function DocumentsPage() {
                       <td style={{ padding: 6 }}>{d.chunkCount}</td>
                       <td style={{ padding: 6 }}>
                         {(d.sizeBytes / 1024).toFixed(1)}KB
+                      </td>
+                      <td style={{ padding: 6 }}>{d.status}</td>
+                      <td style={{ padding: 6 }}>
+                        {canRunLazyExtract(d) ? (
+                          <button
+                            className="btn"
+                            type="button"
+                            onClick={() => void runLazyExtract(d.id)}
+                            disabled={extractingId !== null}
+                          >
+                            {extractingId === d.id
+                              ? "추출 중..."
+                              : "추출/OCR"}
+                          </button>
+                        ) : (
+                          <span className="muted">-</span>
+                        )}
                       </td>
                     </tr>
                   ))}

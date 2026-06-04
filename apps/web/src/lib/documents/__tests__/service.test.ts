@@ -7,9 +7,19 @@
 import { describe, it, expect, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 
-import { DocumentService } from "../service";
+import { DocumentService, DocumentServiceError } from "../service";
 
 type CreateArgs = { data: Record<string, unknown> };
+type TxCallback = (tx: Record<string, unknown>) => Promise<unknown>;
+type UpdateArgs = {
+  where: Record<string, unknown>;
+  data: {
+    status?: string;
+    category?: string | null;
+    metadata?: unknown;
+    chunks?: { create: Array<{ content: string }> };
+  };
+};
 
 function makeService() {
   const createMock = vi.fn(async (_args: CreateArgs) => ({ id: "doc_1" }));
@@ -17,6 +27,27 @@ function makeService() {
     document: { create: createMock },
   } as unknown as ConstructorParameters<typeof DocumentService>[0];
   return { service: new DocumentService(prisma), createMock };
+}
+
+function makeExtractionService() {
+  const findUniqueMock = vi.fn();
+  const updateMock = vi.fn(async (_args: UpdateArgs) => ({ id: "doc_1" }));
+  const deleteManyMock = vi.fn(
+    async (_args: { where: { documentId: string } }) => ({ count: 0 }),
+  );
+  const prismaMock: Record<string, unknown> = {
+    document: { findUnique: findUniqueMock, update: updateMock },
+    documentChunk: { deleteMany: deleteManyMock },
+  };
+  prismaMock.$transaction = vi.fn(async (fn: TxCallback) => fn(prismaMock));
+  const prisma =
+    prismaMock as unknown as ConstructorParameters<typeof DocumentService>[0];
+  return {
+    service: new DocumentService(prisma),
+    findUniqueMock,
+    updateMock,
+    deleteManyMock,
+  };
 }
 
 describe("DocumentService.create — metadata persistence", () => {
@@ -57,8 +88,94 @@ describe("DocumentService.create — metadata persistence", () => {
   });
 });
 
+describe("DocumentService lazy original extraction", () => {
+  it("returns original blob metadata for extractable documents", async () => {
+    const { service, findUniqueMock } = makeExtractionService();
+    findUniqueMock.mockResolvedValueOnce({
+      id: "doc_1",
+      filename: "report.pdf",
+      originalName: "report.pdf",
+      mimeType: "application/pdf",
+      category: null,
+      version: null,
+      metadata: { issuer: "KCL" },
+      originalBlobUrl: "https://blob/x.pdf",
+      originalBlobPath: "documents/originals/x.pdf",
+      originalBlobContentType: "application/pdf",
+      originalBlobSizeBytes: 4096,
+    });
+
+    const row = await service.getOriginalForExtraction("doc_1");
+
+    expect(row.originalBlobUrl).toBe("https://blob/x.pdf");
+    expect(row.metadata).toEqual({ issuer: "KCL" });
+  });
+
+  it("rejects documents without a blob original", async () => {
+    const { service, findUniqueMock } = makeExtractionService();
+    findUniqueMock.mockResolvedValueOnce({
+      id: "doc_1",
+      filename: "memo.txt",
+      originalName: "memo.txt",
+      mimeType: "text/plain",
+      category: null,
+      version: null,
+      metadata: null,
+      originalBlobUrl: null,
+      originalBlobPath: null,
+      originalBlobContentType: null,
+      originalBlobSizeBytes: null,
+    });
+
+    await expect(service.getOriginalForExtraction("doc_1")).rejects.toEqual(
+      expect.objectContaining({ code: "not_extractable" }),
+    );
+  });
+
+  it("attaches extracted text chunks to the existing document", async () => {
+    const { service, updateMock, deleteManyMock } = makeExtractionService();
+
+    const result = await service.attachExtractedTextToOriginal({
+      id: "doc_1",
+      content: "Extracted coating report body.",
+      category: "parsed_pdf_ocr",
+      metadata: { extractionMethod: "ocr", ocrProvider: "google_document_ai" },
+    });
+
+    expect(result.id).toBe("doc_1");
+    expect(result.chunkCount).toBe(1);
+    expect(deleteManyMock).toHaveBeenCalledWith({
+      where: { documentId: "doc_1" },
+    });
+    const updateArgs = updateMock.mock.calls[0]?.[0];
+    expect(updateArgs).toBeDefined();
+    expect(updateArgs.where).toEqual({ id: "doc_1" });
+    expect(updateArgs.data.status).toBe("chunked");
+    expect(updateArgs.data.category).toBe("parsed_pdf_ocr");
+    expect(updateArgs.data.metadata).toEqual({
+      extractionMethod: "ocr",
+      ocrProvider: "google_document_ai",
+    });
+    expect(updateArgs.data.chunks?.create[0].content).toBe(
+      "Extracted coating report body.",
+    );
+  });
+
+  it("surfaces typed not_found for missing documents", async () => {
+    const { service, findUniqueMock } = makeExtractionService();
+    findUniqueMock.mockResolvedValueOnce(null);
+
+    await expect(
+      service.getOriginalForExtraction("missing"),
+    ).rejects.toEqual(expect.objectContaining({ code: "not_found" }));
+    await expect(
+      service.getOriginalForExtraction("missing"),
+    ).rejects.toBeInstanceOf(DocumentServiceError);
+  });
+});
+
 describe("DocumentService.recordOriginalUpload — Blob original (Step 14)", () => {
-  it("persists blob metadata as an original_uploaded document with no chunks", async () => {
+  it("persists extractable blob metadata as needs_extraction with no chunks", async () => {
     const { service, createMock } = makeService();
     const uploadedAt = new Date(1_700_000_000_000);
 
@@ -78,7 +195,7 @@ describe("DocumentService.recordOriginalUpload — Blob original (Step 14)", () 
       originalName: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 2048,
-      status: "original_uploaded",
+      status: "needs_extraction",
       originalBlobUrl:
         "https://blob.vercel-storage.com/documents/originals/report-x.pdf",
       originalBlobPath: "documents/originals/report-x.pdf",
@@ -88,6 +205,21 @@ describe("DocumentService.recordOriginalUpload — Blob original (Step 14)", () 
     });
     // No chunks are created for a binary original.
     expect(args.data).not.toHaveProperty("chunks");
+  });
+
+  it("keeps non-extractable originals as original_uploaded", async () => {
+    const { service, createMock } = makeService();
+    await service.recordOriginalUpload({
+      filename: "sheet.xlsx",
+      contentType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      sizeBytes: 2048,
+      blobUrl: "https://blob/x",
+      blobPath: "documents/originals/sheet.xlsx",
+    });
+
+    const args = createMock.mock.calls[0][0] as CreateArgs;
+    expect(args.data.status).toBe("original_uploaded");
   });
 
   it("defaults uploadedAt when omitted", async () => {

@@ -1,23 +1,29 @@
 // POST /api/documents/parse
-//   Accepts a PDF or DOCX via multipart/form-data, extracts its text layer
-//   (no OCR), then feeds the text into the SAME deterministic chunking +
-//   persistence path as the inline text intake (DocumentService.create).
+//   Accepts a PDF / DOCX / OCR-supported image via multipart/form-data and
+//   extracts text (text layer first; OCR fallback for a scanned PDF or an
+//   image — see extractDocumentTextWithOcrFallback), then feeds the text into
+//   the SAME deterministic chunking + persistence path as the inline text
+//   intake (DocumentService.create).
 //
 //   This is a self-contained path: it does NOT require Vercel Blob — the file
 //   is parsed server-side and only the extracted text + chunks are persisted
-//   (the original binary is not stored here).
+//   (the original binary is not stored here). OCR runs only when
+//   DOCUMENT_OCR_PROVIDER is configured; otherwise OCR-needing inputs surface
+//   ocr_unavailable.
 //
 // Form fields:
-//   - file       (required) the PDF/DOCX binary
+//   - file       (required) the PDF/DOCX/image binary
 //   - metadata   (optional) JSON string validated by DocumentMetadataSchema
 //
-// Contract:
+// Contract (status via extractErrorToStatus):
 //   - missing/!file               → 400 invalid_request
 //   - file too large              → 413 payload_too_large
 //   - unsupported type            → 415 unsupported_media_type
 //   - invalid metadata JSON/shape → 400 invalid_request
 //   - no text layer (scanned)     → 422 no_text_extracted
 //   - parser failure              → 422 parse_failed
+//   - OCR not configured          → 503 ocr_unavailable
+//   - OCR provider call failed     → 502 ocr_failed
 //   - database unreachable        → 503 database_unavailable
 //   - success                     → 201 { id, chunkCount, status, kind, pageCount }
 
@@ -35,10 +41,12 @@ import {
 import {
   DocumentExtractError,
   MAX_PARSE_BYTES,
-  extractDocumentText,
+  extractDocumentTextWithOcrFallback,
+  extractErrorToStatus,
   inferMimeFromFilename,
   isParseableMime,
 } from "@/lib/documents/extract";
+import { isOcrSupportedMime } from "@/lib/documents/ocr";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -99,11 +107,11 @@ export async function POST(req: Request) {
     (file.type && file.type.length > 0 ? file.type : undefined) ??
     inferMimeFromFilename(file.name) ??
     "";
-  if (!isParseableMime(mimeType)) {
+  if (!isParseableMime(mimeType) && !isOcrSupportedMime(mimeType)) {
     return NextResponse.json(
       {
         error: "unsupported_media_type",
-        message: `'${mimeType || file.name}' is not parseable. Only PDF and DOCX are supported (no OCR).`,
+        message: `'${mimeType || file.name}' is not parseable. Supported inputs are PDF, DOCX, and OCR-supported images.`,
       },
       { status: 415 },
     );
@@ -136,19 +144,19 @@ export async function POST(req: Request) {
   const buffer = Buffer.from(await file.arrayBuffer());
   let extracted;
   try {
-    extracted = await extractDocumentText(buffer, mimeType);
+    extracted = await extractDocumentTextWithOcrFallback(buffer, mimeType, {
+      filename: file.name,
+    });
   } catch (err) {
     if (err instanceof DocumentExtractError) {
-      if (err.code === "unsupported_type") {
-        return NextResponse.json(
-          { error: "unsupported_media_type", message: err.message },
-          { status: 415 },
-        );
-      }
-      // no_text_extracted / parse_failed → the uploaded file is unprocessable.
+      // Shared status mapping (extractErrorToStatus) keeps this route in sync
+      // with /api/documents/:id/extract: unsupported→415, ocr_unavailable→503,
+      // ocr_failed→502, no_text_extracted/parse_failed→422.
+      const error =
+        err.code === "unsupported_type" ? "unsupported_media_type" : err.code;
       return NextResponse.json(
-        { error: err.code, message: err.message },
-        { status: 422 },
+        { error, message: err.message },
+        { status: extractErrorToStatus(err.code) },
       );
     }
     return NextResponse.json(
@@ -166,8 +174,19 @@ export async function POST(req: Request) {
       filename: file.name,
       mimeType: "text/plain",
       content: extracted.text,
-      category: `parsed_${extracted.kind}`,
-      ...(metadata ? { metadata } : {}),
+      category:
+        extracted.extractionMethod === "ocr"
+          ? `parsed_${extracted.kind}_ocr`
+          : `parsed_${extracted.kind}`,
+      metadata: {
+        ...(metadata ?? {}),
+        ...(extracted.extractionMethod
+          ? { extractionMethod: extracted.extractionMethod }
+          : {}),
+        ...(extracted.ocrProvider
+          ? { ocrProvider: extracted.ocrProvider }
+          : {}),
+      },
     });
     return NextResponse.json(
       {
@@ -177,6 +196,8 @@ export async function POST(req: Request) {
         kind: extracted.kind,
         pageCount: extracted.pageCount ?? null,
         extractedChars: extracted.text.length,
+        extractionMethod: extracted.extractionMethod,
+        ocrProvider: extracted.ocrProvider ?? null,
       },
       { status: 201 },
     );
