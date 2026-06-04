@@ -62,6 +62,7 @@ export type NormalizedProviderError = {
     | "provider_5xx"
     | "schema_validation"
     | "model_policy"
+    | "cancelled"
     | "unknown";
   message: string;
   retryable: boolean;

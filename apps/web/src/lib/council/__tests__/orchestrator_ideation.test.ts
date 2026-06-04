@@ -19,6 +19,7 @@ import type { ProviderId } from "../types";
 import { FINAL_ANSWER_DISCLAIMER_KO } from "../safety";
 import { buildSessionMarkdown } from "../sessionMarkdown";
 import { __resetRateLimitersForTest } from "../rateLimiter";
+import { IdeationFinalAnswerSchema } from "../schemas";
 
 for (const id of ["OPENAI", "ANTHROPIC", "GEMINI"]) {
   process.env[`RATE_LIMIT_${id}_MAX_CONCURRENT`] = "3";
@@ -98,6 +99,71 @@ describe("CouncilOrchestrator — ideation mode", () => {
     expect(fa.ideas[0].ideaSummary.length).toBeGreaterThan(0);
     // Mandatory disclaimer appended by the safety guard.
     expect(fa.finalMarkdown).toContain(FINAL_ANSWER_DISCLAIMER_KO);
+  });
+
+  it("rejects schema-valid ideation synthesis with no ideas and tries the next provider", async () => {
+    const store = getSessionStore();
+    const sess = ideationSession();
+    await store.create(sess);
+
+    const reg = registry();
+    reg.anthropic.generateSynthesis = async () =>
+      IdeationFinalAnswerSchema.parse({
+        answerKind: "ideation",
+        ideas: [],
+        conclusion: "No usable ideas were returned.",
+        finalMarkdown: "No usable ideas were returned.",
+        missingEvidence: [],
+        unsafePhrases: [],
+        recommendedSafeWording: [],
+        riskLevel: "medium",
+        confidenceScore: 0.5,
+        providerSummary: [{ providerId: "anthropic", status: "succeeded" }],
+        sessionStatus: "completed",
+      });
+    reg.openai.generateSynthesis = async () =>
+      IdeationFinalAnswerSchema.parse({
+        answerKind: "ideation",
+        ideas: [
+          {
+            ideaSummary: "openai recovered usable coating idea",
+            targetApplication: "test application",
+            expectedBenefit: "test benefit",
+            requiredEvidence: ["test evidence"],
+            riskLevel: "medium",
+            recommendedNextExperiment: "run a controlled coupon test",
+            doNotClaim: [],
+          },
+        ],
+        conclusion: "Recovered with the next synthesis provider.",
+        finalMarkdown: "Recovered with the next synthesis provider.",
+        missingEvidence: ["test evidence"],
+        unsafePhrases: [],
+        recommendedSafeWording: [],
+        riskLevel: "medium",
+        confidenceScore: 0.65,
+        providerSummary: [{ providerId: "openai", status: "succeeded" }],
+        sessionStatus: "completed",
+      });
+
+    const o = new CouncilOrchestrator(reg, fastTiming(), store);
+    await o.run(sess.id);
+
+    const final = await store.get(sess.id);
+    const fa = final?.finalAnswer;
+    expect(fa?.answerKind).toBe("ideation");
+    if (fa?.answerKind !== "ideation") throw new Error("expected ideation");
+
+    expect(fa.ideas.length).toBeGreaterThan(0);
+    expect(fa.ideas[0].ideaSummary).toBe(
+      "openai recovered usable coating idea",
+    );
+
+    const anthropicSynthesis = final?.providerCalls.find(
+      (c) => c.providerId === "anthropic" && c.round === "synthesis",
+    );
+    expect(anthropicSynthesis?.status).toBe("schema_invalid");
+    expect(anthropicSynthesis?.errorMessage).toContain("ideation.ideas");
   });
 
   it("runs the safety guard over idea text (auto-detects unsafe phrases in doNotClaim)", async () => {

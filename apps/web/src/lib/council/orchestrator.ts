@@ -95,6 +95,10 @@ export type TimingConfig = {
   // providers, then cancel stragglers and advance. Set very high to effectively
   // restore "wait for all" behavior.
   roundQuorumGraceMs: number;
+  // Providers that must succeed before quorum grace can start. OpenAI/GPT is
+  // required by default because its Round 1 opinion must be represented in the
+  // downstream meeting input unless it actually fails or times out.
+  requiredProvidersForQuorum: ProviderId[];
 };
 
 export function defaultTimingConfig(): TimingConfig {
@@ -112,6 +116,10 @@ export function defaultTimingConfig(): TimingConfig {
     minOpinionsForMeeting: n("MIN_INITIAL_OPINIONS_FOR_MEETING", 2),
     minCritiquesForSynthesis: n("MIN_CRITIQUES_FOR_SYNTHESIS", 2),
     roundQuorumGraceMs: n("ROUND_QUORUM_GRACE_MS", 8_000),
+    requiredProvidersForQuorum: parseProviderIdList(
+      process.env.ROUND_REQUIRED_PROVIDERS,
+      ["openai"],
+    ),
   };
 }
 
@@ -155,7 +163,8 @@ export class CouncilOrchestrator {
       // safe. For ai_only it is a no-op (`not_requested`); otherwise it runs
       // the internal evidence bundle once and records status. It NEVER
       // fails the session — any error is captured in the preview and the
-      // council proceeds. Candidates are NOT yet injected into prompts.
+      // council proceeds. The candidates ARE injected into every round's
+      // prompt below (Step 8).
       const evidencePreview = await this.runEvidencePreflight(sess);
       await this.store.update(sessionId, { evidencePreview });
 
@@ -390,6 +399,12 @@ export class CouncilOrchestrator {
     const results: Array<RunResult<T> | undefined> = PROVIDER_IDS.map(
       () => undefined,
     );
+    const requiredProviderIds = this.cfg.requiredProvidersForQuorum;
+    const hasRequiredProviderSuccesses = () =>
+      requiredProviderIds.every((id) => {
+        const idx = PROVIDER_IDS.indexOf(id);
+        return idx === -1 || results[idx]?.ok === true;
+      });
     let successCount = 0;
     let settledCount = 0;
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -441,6 +456,7 @@ export class CouncilOrchestrator {
             // Quorum reached → give stragglers a bounded grace, then advance.
             if (
               successCount >= quorum &&
+              hasRequiredProviderSuccesses() &&
               graceTimer === undefined &&
               !proceeded
             ) {
@@ -524,7 +540,7 @@ export class CouncilOrchestrator {
       if (r === undefined) {
         failures.push({
           providerId: id,
-          errorType: "unknown",
+          errorType: "cancelled",
           message: "cancelled after quorum grace window",
           retryable: false,
         });
@@ -623,7 +639,7 @@ export class CouncilOrchestrator {
         if (args.externalSignal?.aborted) {
           lastError = {
             providerId: args.providerId,
-            errorType: "unknown",
+            errorType: "cancelled",
             message: "cancelled after quorum grace window",
             retryable: false,
           };
@@ -745,7 +761,7 @@ export class CouncilOrchestrator {
               ok: false,
               error: {
                 providerId: args.providerId,
-                errorType: "unknown",
+                errorType: "cancelled",
                 message: "cancelled after quorum grace window",
                 retryable: false,
               },
@@ -773,11 +789,24 @@ export class CouncilOrchestrator {
           );
           return { ok: true, value: value as T, latencyMs };
         } catch (err) {
-          const norm = normalizeProviderError(args.providerId, err);
+          const norm: NormalizedProviderError = args.externalSignal?.aborted
+            ? {
+                providerId: args.providerId,
+                errorType: "cancelled",
+                message: "cancelled after quorum grace window",
+                retryable: false,
+                rawError: err,
+              }
+            : normalizeProviderError(args.providerId, err);
           lastError = norm;
           this.clog(
             `[council ${args.sessionId}]   ← ${args.providerId} FAIL(${norm.errorType}) model=${modelForThisHop} (+${Date.now() - args.dispatchAt}ms) ${norm.message}`,
           );
+
+          if (norm.errorType === "cancelled") {
+            controller.abort();
+            break;
+          }
 
           if (norm.errorType === "rate_limit") {
             rateLimitedSeen = true;
@@ -993,6 +1022,7 @@ export class CouncilOrchestrator {
               },
             },
           );
+          assertSynthesisResultUsable(input, ans);
           return this.applySafetyGuard(ans, opinionCount, critiqueCount);
         } catch (err) {
           await this.recordSynthesisError(sessionId, id, err, model, {
@@ -1541,6 +1571,73 @@ export class CouncilOrchestrator {
 }
 
 // ───────────────────────── helpers ─────────────────────────────────────
+
+function assertSynthesisResultUsable(
+  input: SynthesisInput,
+  ans: SynthesisResult,
+): void {
+  if (input.taskType !== "application_ideas") return;
+
+  if (ans.answerKind !== "ideation") {
+    throw synthesisSemanticValidationError(
+      "application_ideas synthesis must return answerKind=ideation",
+      ans,
+    );
+  }
+
+  if (ans.ideas.length === 0) {
+    throw synthesisSemanticValidationError(
+      "ideation.ideas: at least one idea is required",
+      ans,
+    );
+  }
+
+  const invalidIndex = ans.ideas.findIndex(
+    (idea) =>
+      !hasText(idea.ideaSummary) ||
+      (!hasText(idea.targetApplication) &&
+        !hasText(idea.recommendedNextExperiment)),
+  );
+  if (invalidIndex !== -1) {
+    throw synthesisSemanticValidationError(
+      `ideation.ideas.${invalidIndex}: ideaSummary and either targetApplication or recommendedNextExperiment are required`,
+      ans,
+    );
+  }
+}
+
+function hasText(s: string | undefined): boolean {
+  return typeof s === "string" && s.trim().length > 0;
+}
+
+function synthesisSemanticValidationError(
+  message: string,
+  parsed: unknown,
+): SchemaValidationError {
+  return new SchemaValidationError(message, safeJsonStringify(parsed), parsed);
+}
+
+function safeJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function parseProviderIdList(
+  raw: string | undefined,
+  fallback: ProviderId[],
+): ProviderId[] {
+  if (raw === undefined) return fallback;
+  const ids = raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s): s is ProviderId =>
+      (PROVIDER_IDS as readonly string[]).includes(s),
+    );
+  return Array.from(new Set(ids));
+}
 
 function normalizeProviderError(
   providerId: ProviderId,

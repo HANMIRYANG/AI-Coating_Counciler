@@ -20,9 +20,15 @@ const JSON_RULES_KO = `반드시 다음 규칙을 지키세요.
 - 응답은 오직 단 하나의 JSON 객체여야 합니다. 그 외 텍스트(설명, 인사, 코드블록 표시)를 포함하지 마세요.
 - 누락 필드가 없도록 모든 키를 채우세요. 빈 항목은 빈 배열 [] 또는 빈 문자열 ""을 사용하세요.
 - 한국어로 응답하세요.
+- summary와 recommendedAnswer는 짧고 실무적인 문장으로 작성하세요. technicalAssessment는 최대 4개, 각 detail은 2문장 이내로 제한하세요.
+- 사용자에게 보이는 답변 필드에는 내부 시스템/개발 용어를 쓰지 말고 자연스러운 업무 표현을 사용하세요.
 - 단정·과장 표현을 사용하지 마세요. 위험 표현은 unsafePhrases 필드로 분리하세요.`;
 
 export const KNOWN_DANGEROUS_PHRASES_LIST = UNSAFE_PHRASES_KO.join(", ");
+
+export function evidenceCandidateId(index: number): string {
+  return `E${index + 1}`;
+}
 
 /**
  * Per-taskType behavior guidance.
@@ -76,11 +82,11 @@ export function taskTypeGuidance(taskType: TaskType): string {
     case "document_based_answer":
       return `taskType=document_based_answer (문서 기반 답변 모드)
 - 이 모드는 사내 기술자료/시험성적서 등 업로드 문서를 근거로 답변하도록 설계되었습니다.
-- 현재 시스템은 의미 기반 RAG/벡터 검색/외부 출처 조회를 아직 구현하지 않았습니다.
-  evidenceMode가 internal_docs 이면 키워드 검색 기반 "사내 문서 근거 컨텍스트"(스니펫 후보)가 프롬프트에 함께 제공될 수 있으나, 이는 검증된 최종 근거가 아닙니다.
+- 현재 시스템은 의미 기반 내부 문서 검색과 외부 출처 자동 검증을 아직 완전하게 제공하지 않습니다.
+  evidenceMode가 internal_docs 이면 키워드 검색 기반 "사내 문서 근거 후보"(문서 발췌 후보)가 함께 제공될 수 있으나, 이는 검증된 최종 근거가 아닙니다.
 - 따라서 이 모드에서는 다음을 반드시 지키세요:
-  * evidenceBackedClaims는 사용자가 프롬프트 본문에 직접 적어준 사실, 또는 제공된 스니펫이 직접 뒷받침하는 항목에 한정.
-  * 사내 문서 근거 컨텍스트가 없거나 검색 결과가 부족하면 missingEvidence에 "사내 문서가 업로드/검색되지 않아 근거가 부족합니다" 로 시작하는 항목을 두세요.
+  * evidenceBackedClaims는 사용자가 프롬프트 본문에 직접 적어준 사실, 또는 제공된 문서 발췌가 직접 뒷받침하는 항목에 한정.
+  * 사내 문서 근거 후보가 없거나 검색 결과가 부족하면 missingEvidence에 "사내 문서가 업로드/검색되지 않아 근거가 부족합니다" 로 시작하는 항목을 두세요.
   * recommendedAnswer는 "문서가 첨부되면 다시 검토 필요" 어조로 작성하세요.
   * 단정 표현 금지. 임의의 시험 수치/인증 번호를 만들어내지 마세요.`;
 
@@ -118,26 +124,65 @@ export function taskTypeGuidance(taskType: TaskType): string {
 function formatEvidenceMetadata(metadata: DocumentMetadata | null): string {
   if (!metadata) return "";
   const parts: string[] = [];
-  if (metadata.productName) parts.push(`product=${metadata.productName}`);
-  if (metadata.documentType) parts.push(`type=${metadata.documentType}`);
-  if (metadata.issuer) parts.push(`issuer=${metadata.issuer}`);
-  if (metadata.testMethod) parts.push(`testMethod=${metadata.testMethod}`);
-  if (metadata.substrate) parts.push(`substrate=${metadata.substrate}`);
+  if (metadata.productName) parts.push(`제품=${metadata.productName}`);
+  if (metadata.documentType) parts.push(`문서유형=${metadata.documentType}`);
+  if (metadata.issuer) parts.push(`발행기관=${metadata.issuer}`);
+  if (metadata.testMethod) parts.push(`시험방법=${metadata.testMethod}`);
+  if (metadata.substrate) parts.push(`기재=${metadata.substrate}`);
   if (metadata.coatingThickness)
-    parts.push(`thickness=${metadata.coatingThickness}`);
+    parts.push(`도막두께=${metadata.coatingThickness}`);
   return parts.length > 0 ? ` (${parts.join(", ")})` : "";
 }
 
+function formatTrustLevel(level: string): string {
+  switch (level) {
+    case "uploaded_original":
+      return "업로드 원본";
+    case "uploaded_copy":
+      return "업로드 사본";
+    case "official_registry":
+      return "공식 등록부";
+    case "official_public_page":
+      return "공식 공개 페이지";
+    case "third_party_reference":
+      return "제3자 참고자료";
+    case "unverified_web":
+      return "미검증 웹 자료";
+    default:
+      return level || "미확인";
+  }
+}
+
+function formatVerificationStatus(status: string): string {
+  switch (status) {
+    case "verified":
+      return "검증됨";
+    case "auto_extracted":
+      return "자동 추출";
+    case "needs_review":
+      return "검토 필요";
+    case "unverified":
+      return "미검증";
+    default:
+      return status || "미확인";
+  }
+}
+
 const EVIDENCE_BLOCK_HEADER =
-  "사내 문서 근거 컨텍스트 (내부 문서 키워드 검색 기반 — 검증된 최종 근거가 아님):";
+  "사내 문서 근거 후보 (내부 문서 키워드 검색 기반 — 검증된 최종 근거가 아님):";
 
 // Shared usage rules appended to every evidence block. Keeps providers from
 // treating snippets as certified proof.
 const EVIDENCE_USAGE_RULES_KO = [
-  "- 아래 스니펫은 내부 문서 '후보'이며 인증/시험 결과의 확정 증거가 아닙니다.",
-  "- 스니펫 또는 metadata가 직접 뒷받침하지 않는 주장은 evidenceBackedClaims에 넣지 말고 assumptions 또는 missingEvidence로 분류하세요.",
-  "- 스니펫/metadata가 직접 명시하지 않는 한 인증·성능·안전 단정 표현을 만들지 마세요.",
+  "- 아래 문서 발췌는 내부 문서 '후보'이며 인증/시험 결과의 확정 증거가 아닙니다.",
+  "- 문서 발췌 또는 문서 정보가 직접 뒷받침하지 않는 주장은 evidenceBackedClaims에 넣지 말고 assumptions 또는 missingEvidence로 분류하세요.",
+  "- 문서 발췌/문서 정보가 직접 명시하지 않는 한 인증·성능·안전 단정 표현을 만들지 마세요.",
+  "- 각 후보의 근거 ID(E1, E2...)는 최종 합성에서 주장별 근거 연결에만 사용하세요. 없는 근거 ID를 만들지 마세요.",
 ];
+
+const EVIDENCE_OUTPUT_SCHEMA_FIELDS_KO = `"coveredClaims": [{ "claim": string, "evidenceChunkIds": string[] }],
+  "uncoveredClaims": string[],
+  "evidenceCoverageStatus": "not_requested"|"no_evidence"|"partial"|"sufficient"|"unavailable"`;
 
 const EVIDENCE_STATUS_MESSAGE_KO: Record<string, string> = {
   no_matches: "내부 문서 검색 결과가 없습니다.",
@@ -169,7 +214,7 @@ export function formatEvidenceContextBlock(ctx?: EvidenceContext): string {
         c.sourceType === "external_url"
           ? `[외부출처: ${c.filename}] (${c.url ?? ""})`
           : `[${c.filename} #${c.chunkIndex}]`;
-      return `${i + 1}. ${head} trust=${c.trustLevel}, verification=${c.verificationStatus}${meta}\n   스니펫: ${c.snippet}`;
+      return `${i + 1}. [근거 ${evidenceCandidateId(i)}] ${head} 신뢰수준=${formatTrustLevel(c.trustLevel)}, 검증상태=${formatVerificationStatus(c.verificationStatus)}${meta}\n   문서 발췌: ${c.snippet}`;
     });
     return [
       EVIDENCE_BLOCK_HEADER,
@@ -195,6 +240,34 @@ export function formatEvidenceContextBlock(ctx?: EvidenceContext): string {
 function withEvidenceBlock(userBody: string, ctx?: EvidenceContext): string {
   const block = formatEvidenceContextBlock(ctx);
   return block ? `${userBody}\n\n${block}` : userBody;
+}
+
+function synthesisEvidenceMappingGuidance(ctx?: EvidenceContext): string {
+  if (!ctx || ctx.retrievalStatus === "not_requested") {
+    return `근거 매핑 규칙:
+- 근거 후보가 제공되지 않았으므로 coveredClaims와 uncoveredClaims는 빈 배열로 두고 evidenceCoverageStatus는 "not_requested"로 두세요.`;
+  }
+
+  if (ctx.retrievalStatus === "no_matches") {
+    return `근거 매핑 규칙:
+- 내부 문서 검색 결과가 없으므로 coveredClaims는 빈 배열로 두세요.
+- 문서 근거 없이 확정할 수 없는 주요 주장은 uncoveredClaims 또는 missingEvidence에 넣으세요.
+- evidenceCoverageStatus는 "no_evidence"로 두세요.`;
+  }
+
+  if (ctx.retrievalStatus === "unavailable" || ctx.retrievalStatus === "failed") {
+    return `근거 매핑 규칙:
+- 문서 근거를 사용할 수 없으므로 coveredClaims는 빈 배열로 두세요.
+- 문서 근거 없이 확정할 수 없는 주요 주장은 uncoveredClaims 또는 missingEvidence에 넣으세요.
+- evidenceCoverageStatus는 "unavailable"로 두세요.`;
+  }
+
+  return `근거 매핑 규칙:
+- 근거 후보가 [근거 E1], [근거 E2] 형식으로 제공된 경우, coveredClaims[].evidenceChunkIds에는 대괄호 없이 "E1", "E2" 같은 근거 ID만 넣으세요.
+- 제공된 문서 발췌가 직접 뒷받침하는 주장만 coveredClaims에 넣으세요.
+- 문서 발췌가 직접 뒷받침하지 않는 주장은 coveredClaims에 넣지 말고 uncoveredClaims 또는 missingEvidence에 넣으세요.
+- 없는 근거 ID를 만들지 마세요.
+- 모든 주요 근거 주장에 유효한 근거 ID가 연결된 경우에만 evidenceCoverageStatus를 "sufficient"로 두고, 그 외에는 "partial"로 두세요.`;
 }
 
 export function buildInitialOpinionMessages(
@@ -316,6 +389,8 @@ ${taskTypeGuidance(input.taskType)}
 
 ${JSON_RULES_KO}
 
+${synthesisEvidenceMappingGuidance(input.evidenceContext)}
+
 응답 JSON 스키마:
 {
   "conclusion": string,
@@ -331,7 +406,8 @@ ${JSON_RULES_KO}
   "confidenceScore": number,
   "followUpQuestions": string[],
   "unresolvedDisagreements": string[],
-  "providerSummary": [{ "providerId": "openai"|"anthropic"|"gemini", "status": string, "latencyMs"?: number }]
+  "providerSummary": [{ "providerId": "openai"|"anthropic"|"gemini", "status": string, "latencyMs"?: number }],
+  ${EVIDENCE_OUTPUT_SCHEMA_FIELDS_KO}
 }`;
 
   const user = withEvidenceBlock(
@@ -387,6 +463,8 @@ ${taskTypeGuidance(input.taskType)}
 
 ${JSON_RULES_KO}
 
+${synthesisEvidenceMappingGuidance(input.evidenceContext)}
+
 추가 규칙:
 - 모든 아이디어는 가설/검토 필요 단계입니다. 단정 표현을 사용하지 마세요.
 - 각 아이디어의 doNotClaim에는 "이 아이디어로 아직 주장하면 안 되는 표현"을 명시하세요.
@@ -415,7 +493,8 @@ ${JSON_RULES_KO}
   "recommendedSafeWording": string[],
   "riskLevel": "low"|"medium"|"high"|"critical",
   "confidenceScore": number,
-  "providerSummary": [{ "providerId": "openai"|"anthropic"|"gemini", "status": string, "latencyMs"?: number }]
+  "providerSummary": [{ "providerId": "openai"|"anthropic"|"gemini", "status": string, "latencyMs"?: number }],
+  ${EVIDENCE_OUTPUT_SCHEMA_FIELDS_KO}
 }
 
 특히 다음 한국어 표현은 unsafePhrases에 반드시 포함하세요: ${KNOWN_DANGEROUS_PHRASES_LIST}`;
@@ -470,6 +549,8 @@ ${taskTypeGuidance(input.taskType)}
 
 ${JSON_RULES_KO}
 
+${synthesisEvidenceMappingGuidance(input.evidenceContext)}
+
 추가 규칙:
 - 각 항목의 status는 met(충족) / unmet(미충족) / unknown(확인 필요) 중 하나로만 표기하세요.
 - 사용자가 보유 사실을 명시하지 않은 항목은 절대 met으로 단정하지 말고 unknown 또는 unmet으로 두세요.
@@ -497,7 +578,8 @@ ${JSON_RULES_KO}
   "recommendedSafeWording": string[],
   "riskLevel": "low"|"medium"|"high"|"critical",
   "confidenceScore": number,
-  "providerSummary": [{ "providerId": "openai"|"anthropic"|"gemini", "status": string, "latencyMs"?: number }]
+  "providerSummary": [{ "providerId": "openai"|"anthropic"|"gemini", "status": string, "latencyMs"?: number }],
+  ${EVIDENCE_OUTPUT_SCHEMA_FIELDS_KO}
 }
 
 특히 다음 한국어 표현은 unsafePhrases에 반드시 포함하세요: ${KNOWN_DANGEROUS_PHRASES_LIST}`;

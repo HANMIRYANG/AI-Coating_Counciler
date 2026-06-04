@@ -995,11 +995,9 @@ function ListSection({ title, items }: { title: string; items: string[] }) {
 }
 
 function SynthCard({ critiques }: { critiques: ProviderCritique[] }) {
-  const agreements = critiques.flatMap((c) => c.agreements).slice(0, 4);
-  const disagreements = critiques.flatMap((c) => c.disagreements).slice(0, 4);
-  const corrections = critiques
-    .flatMap((c) => c.recommendedCorrections)
-    .slice(0, 4);
+  const agreements = meetingItems(critiques, (c) => c.agreements);
+  const disagreements = meetingItems(critiques, (c) => c.disagreements);
+  const corrections = meetingItems(critiques, (c) => c.recommendedCorrections);
 
   return (
     <div className="synth-card fade-in">
@@ -1032,6 +1030,17 @@ function SynthCard({ critiques }: { critiques: ProviderCritique[] }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function meetingItems(
+  critiques: ProviderCritique[],
+  pick: (critique: ProviderCritique) => string[],
+): string[] {
+  return critiques.flatMap((critique) =>
+    pick(critique).map(
+      (item) => `${PROVIDER_LABELS[critique.providerId]}: ${item}`,
+    ),
   );
 }
 

@@ -1,12 +1,11 @@
 // Deterministic population of the final-answer evidence usage contract
 // (Step 10).
 //
-// The synthesis prompt is NOT changed in this step, so providers do not
-// (yet) return evidence-usage fields. This module derives a conservative,
-// bounded contract from the session evidence preview so the final answer
-// always carries a coherent `evidenceCoverageStatus` + references. When a
-// future prompt makes the model emit its own mapping, that explicit output
-// is respected (including `sufficient`, which is NEVER auto-asserted here).
+// Synthesis prompts may ask the model to map claims to prompt-visible
+// evidence IDs (E1, E2...). This module validates that mapping against the
+// session evidence preview, translates valid IDs to internal refs, and
+// downgrades invalid/unmapped claims into uncovered claims. When no mapping
+// is returned, it derives a conservative partial contract from the preview.
 //
 // Pure + deterministic: no clocks, no randomness, no I/O.
 
@@ -15,6 +14,7 @@ import type {
   EvidencePreviewCandidate,
   SessionEvidencePreview,
 } from "./evidencePreview";
+import { evidenceCandidateId } from "./prompts";
 
 // Structural carrier for the evidence-usage contract. Both FinalAnswer and
 // IdeationFinalAnswer satisfy this (identical field types), so the helpers
@@ -46,6 +46,14 @@ function toRef(c: EvidencePreviewCandidate): EvidenceUsedRef {
   };
 }
 
+function unique<T>(items: T[]): T[] {
+  return Array.from(new Set(items));
+}
+
+function normalizeEvidenceId(id: string): string {
+  return id.trim().replace(/^\[|\]$/g, "").replace(/^근거\s+/i, "");
+}
+
 // Prefer the answer's own missingEvidence as the uncovered-claim list; fall
 // back to the generic note. Always bounded.
 function deriveUncoveredClaims(answer: EvidenceUsageCarrier): string[] {
@@ -55,15 +63,77 @@ function deriveUncoveredClaims(answer: EvidenceUsageCarrier): string[] {
   return list.slice(0, MAX_UNCOVERED_CLAIMS);
 }
 
-// Did the model itself produce an evidence mapping? With the current prompt
-// it never does (fields default to empty / not_requested), but respect it if
-// a future prompt starts emitting one.
+// Did the model itself produce an evidence mapping? The prompt asks synthesis
+// providers to use E1/E2 IDs when evidence candidates are present; schema
+// defaults keep older/no-evidence outputs compatible.
 function modelProducedMapping(answer: EvidenceUsageCarrier): boolean {
   return (
     answer.evidenceCoverageStatus !== "not_requested" ||
     answer.evidenceUsed.length > 0 ||
-    answer.coveredClaims.length > 0
+    answer.coveredClaims.length > 0 ||
+    answer.uncoveredClaims.length > 0
   );
+}
+
+function candidateLookup(
+  candidates: EvidencePreviewCandidate[],
+): Map<string, EvidencePreviewCandidate> {
+  const map = new Map<string, EvidencePreviewCandidate>();
+  candidates.forEach((c, i) => {
+    map.set(evidenceCandidateId(i), c);
+    map.set(c.chunkId, c);
+  });
+  return map;
+}
+
+function applyModelMapping<T extends EvidenceUsageCarrier>(
+  answer: T,
+  preview: SessionEvidencePreview,
+): T {
+  const candidates = preview.candidates;
+  const byId = candidateLookup(candidates);
+  const used = new Map<string, EvidenceUsedRef>();
+  const coveredClaims: EvidenceUsageCarrier["coveredClaims"] = [];
+  const uncoveredClaims = new Set(
+    answer.uncoveredClaims.filter((c) => c.trim().length > 0),
+  );
+
+  for (const claim of answer.coveredClaims) {
+    const resolvedChunkIds: string[] = [];
+    for (const rawId of claim.evidenceChunkIds) {
+      const candidate = byId.get(normalizeEvidenceId(rawId));
+      if (!candidate) continue;
+      resolvedChunkIds.push(candidate.chunkId);
+      used.set(candidate.chunkId, toRef(candidate));
+    }
+
+    const uniqIds = unique(resolvedChunkIds);
+    if (claim.claim.trim().length > 0 && uniqIds.length > 0) {
+      coveredClaims.push({ claim: claim.claim, evidenceChunkIds: uniqIds });
+    } else if (claim.claim.trim().length > 0) {
+      uncoveredClaims.add(claim.claim);
+    }
+  }
+
+  const uncovered =
+    uncoveredClaims.size > 0
+      ? Array.from(uncoveredClaims).slice(0, MAX_UNCOVERED_CLAIMS)
+      : answer.missingEvidence.length > 0
+        ? deriveUncoveredClaims(answer)
+        : [];
+  const hasValidCoveredClaims = coveredClaims.length > 0;
+  const canAcceptSufficient =
+    answer.evidenceCoverageStatus === "sufficient" &&
+    hasValidCoveredClaims &&
+    uncovered.length === 0;
+
+  return {
+    ...answer,
+    evidenceUsed: Array.from(used.values()),
+    coveredClaims,
+    uncoveredClaims: uncovered,
+    evidenceCoverageStatus: canAcceptSufficient ? "sufficient" : "partial",
+  } as T;
 }
 
 /**
@@ -74,7 +144,7 @@ function modelProducedMapping(answer: EvidenceUsageCarrier): boolean {
  *   - ai_only / not_requested / missing preview → `not_requested`, no refs.
  *   - `no_matches` → `no_evidence`, uncovered claims, no refs.
  *   - `unavailable` / `failed` → `unavailable`, uncovered claims, no refs.
- *   - `ok` + model mapping present → respect model output as-is.
+ *   - `ok` + model mapping present → validate + translate E1/E2 refs.
  *   - `ok` + no model mapping → conservative `partial`: refs from preview
  *     candidates, uncovered claims derived, no covered claims.
  */
@@ -116,8 +186,7 @@ export function applyEvidenceUsage<T extends EvidenceUsageCarrier>(
 
   // status === "ok"
   if (modelProducedMapping(answer)) {
-    // Respect the model's explicit mapping (already schema-validated).
-    return answer;
+    return applyModelMapping(answer, preview);
   }
 
   const coverageStatus: EvidenceCoverageStatus = "partial";

@@ -7,6 +7,9 @@ import {
   buildCritiqueMessages,
   buildInitialOpinionMessages,
   buildSynthesisMessages,
+  buildIdeationSynthesisMessages,
+  buildChecklistSynthesisMessages,
+  evidenceCandidateId,
   extractJsonObject,
   formatEvidenceContextBlock,
   JsonParseError,
@@ -151,10 +154,35 @@ describe("taskTypeGuidance", () => {
     expect(g).toMatch(/인증기관 확인 필요/);
   });
 
-  it("explicitly handles the no-RAG limitation for document_based_answer", () => {
+  it("returns customer-reply guidance for customer_reply", () => {
+    const g = taskTypeGuidance("customer_reply");
+    expect(g).toContain("customer_reply");
+    expect(g).toMatch(/외부 업체|고객/);
+    expect(g).toMatch(/발송용 문장/);
+    expect(g).toMatch(/사람 검토/);
+  });
+
+  it("returns proposal-copy guidance for proposal_copy", () => {
+    const g = taskTypeGuidance("proposal_copy");
+    expect(g).toContain("proposal_copy");
+    expect(g).toMatch(/제안서|카탈로그/);
+    expect(g).toMatch(/광고법|인증 단정/);
+    expect(g).toMatch(/시험 조건/);
+  });
+
+  it("returns risky-phrase guidance for risky_phrase_review", () => {
+    const g = taskTypeGuidance("risky_phrase_review");
+    expect(g).toContain("risky_phrase_review");
+    expect(g).toMatch(/위험 표현/);
+    expect(g).toMatch(/대체 표현/);
+    expect(g).toMatch(/unsafePhrases/);
+  });
+
+  it("explicitly handles current document-search limitations for document_based_answer", () => {
     const g = taskTypeGuidance("document_based_answer");
     expect(g).toContain("document_based_answer");
-    expect(g).toMatch(/RAG/i);
+    expect(g).toMatch(/의미 기반 내부 문서 검색/);
+    expect(g).not.toContain("RAG");
     expect(g).toMatch(/문서가 업로드|검색되지 않/);
     expect(g).toMatch(/단정 표현|단정/);
   });
@@ -197,13 +225,14 @@ describe("prompt builders inject task-type guidance", () => {
     expect(system).toMatch(/체크리스트/);
   });
 
-  it("initial opinion prompt for document_based_answer flags the no-RAG limitation", () => {
+  it("initial opinion prompt for document_based_answer flags document-search limitations", () => {
     const { system } = buildInitialOpinionMessages(
       "test",
       initial("document_based_answer"),
     );
     expect(system).toContain("document_based_answer");
-    expect(system).toMatch(/RAG/i);
+    expect(system).toMatch(/의미 기반 내부 문서 검색/);
+    expect(system).not.toContain("RAG");
     expect(system).toMatch(/업로드|검색되지 않/);
   });
 
@@ -221,7 +250,37 @@ describe("prompt builders inject task-type guidance", () => {
       synthesisInput("document_based_answer"),
     );
     expect(system).toContain("document_based_answer");
-    expect(system).toMatch(/RAG/i);
+    expect(system).toMatch(/의미 기반 내부 문서 검색/);
+    expect(system).not.toContain("RAG");
+  });
+
+  it("all standard task types carry their own guidance into initial and synthesis prompts", () => {
+    const expected: Record<TaskType, RegExp> = {
+      technical_review: /기술 검토 모드/,
+      test_report_interpretation: /시험성적서 해석 모드/,
+      customer_reply: /업체 답변 작성 모드/,
+      proposal_copy: /제안서 문구 작성 모드/,
+      risky_phrase_review: /위험 표현 검토 모드/,
+      application_ideas: /아이디어 모드/,
+      certification_checklist: /인증\/규격 체크리스트 모드/,
+      document_based_answer: /문서 기반 답변 모드/,
+    };
+
+    for (const taskType of Object.keys(expected) as TaskType[]) {
+      const { system: initialSystem } = buildInitialOpinionMessages(
+        "test",
+        initial(taskType),
+      );
+      expect(initialSystem).toMatch(expected[taskType]);
+
+      const { system: synthSystem } =
+        taskType === "application_ideas"
+          ? buildIdeationSynthesisMessages("test", synthesisInput(taskType))
+          : taskType === "certification_checklist"
+            ? buildChecklistSynthesisMessages("test", synthesisInput(taskType))
+            : buildSynthesisMessages("test", synthesisInput(taskType));
+      expect(synthSystem).toMatch(expected[taskType]);
+    }
   });
 
   it("ai_only initial prompt does NOT include an evidence block", () => {
@@ -229,8 +288,8 @@ describe("prompt builders inject task-type guidance", () => {
       "test",
       initial("technical_review"),
     );
-    expect(user).not.toMatch(/사내 문서 근거 컨텍스트/);
-    expect(system).not.toMatch(/사내 문서 근거 컨텍스트/);
+    expect(user).not.toMatch(/사내 문서 근거 후보/);
+    expect(system).not.toMatch(/사내 문서 근거 후보/);
   });
 
   it("not_requested context omits the evidence block entirely", () => {
@@ -269,16 +328,44 @@ const okContext: EvidenceContext = {
 };
 
 describe("formatEvidenceContextBlock — ok", () => {
-  it("lists candidates with snippet, metadata, trust + verification", () => {
+  it("lists candidates with document excerpts, document info, trust + verification", () => {
     const block = formatEvidenceContextBlock(okContext);
-    expect(block).toMatch(/사내 문서 근거 컨텍스트/);
+    expect(block).toMatch(/사내 문서 근거 후보/);
     expect(block).toMatch(/검색 상태: ok \(총 3건 중 1건 표시\)/);
+    expect(block).toContain(`[근거 ${evidenceCandidateId(0)}]`);
     expect(block).toContain("kcl-report.md #2");
-    expect(block).toContain("trust=uploaded_copy");
-    expect(block).toContain("verification=auto_extracted");
-    expect(block).toContain("issuer=KCL");
-    expect(block).toContain("type=test_report");
+    expect(block).toContain("신뢰수준=업로드 사본");
+    expect(block).toContain("검증상태=자동 추출");
+    expect(block).toContain("발행기관=KCL");
+    expect(block).toContain("문서유형=test_report");
+    expect(block).toContain("문서 발췌:");
+    expect(block).not.toContain("스니펫");
+    expect(block).not.toMatch(/metadata|trust=|verification=/i);
     expect(block).toContain("방오 코팅의 부착 성능 시험 결과 요약");
+  });
+
+  it("adds evidence mapping requirements to every synthesis prompt when evidence exists", () => {
+    const standard = buildSynthesisMessages("test", {
+      ...synthesisInput("technical_review"),
+      evidenceContext: okContext,
+    });
+    const ideation = buildIdeationSynthesisMessages("test", {
+      ...synthesisInput("application_ideas"),
+      evidenceContext: okContext,
+    });
+    const checklist = buildChecklistSynthesisMessages("test", {
+      ...synthesisInput("certification_checklist"),
+      evidenceContext: okContext,
+    });
+
+    for (const { system, user } of [standard, ideation, checklist]) {
+      expect(user).toContain("[근거 E1]");
+      expect(system).toContain("coveredClaims");
+      expect(system).toContain("uncoveredClaims");
+      expect(system).toContain("evidenceCoverageStatus");
+      expect(system).toMatch(/evidenceChunkIds.*E1/s);
+      expect(system).toMatch(/없는 근거 ID/);
+    }
   });
 
   it("does NOT leak internal identifiers or any full chunk body", () => {
@@ -327,7 +414,7 @@ describe("prompt builders inject the evidence block for internal_docs", () => {
       ...initial("document_based_answer"),
       evidenceContext: okContext,
     });
-    expect(user).toMatch(/사내 문서 근거 컨텍스트/);
+    expect(user).toMatch(/사내 문서 근거 후보/);
     expect(user).toContain("kcl-report.md #2");
     expect(user).not.toContain("doc_SECRET_ID");
   });
@@ -337,7 +424,7 @@ describe("prompt builders inject the evidence block for internal_docs", () => {
       ...critiqueInput("technical_review"),
       evidenceContext: okContext,
     });
-    expect(user).toMatch(/사내 문서 근거 컨텍스트/);
+    expect(user).toMatch(/사내 문서 근거 후보/);
     expect(user).toContain("방오 코팅의 부착 성능");
   });
 
@@ -346,8 +433,9 @@ describe("prompt builders inject the evidence block for internal_docs", () => {
       ...synthesisInput("technical_review"),
       evidenceContext: okContext,
     });
-    expect(user).toMatch(/사내 문서 근거 컨텍스트/);
-    expect(user).toContain("trust=uploaded_copy");
+    expect(user).toMatch(/사내 문서 근거 후보/);
+    expect(user).toContain("신뢰수준=업로드 사본");
+    expect(user).not.toContain("스니펫");
   });
 
   it("omits the block for ai_only (undefined context) across all builders", () => {
@@ -355,7 +443,7 @@ describe("prompt builders inject the evidence block for internal_docs", () => {
     const c = buildCritiqueMessages("t", critiqueInput("technical_review"));
     const s = buildSynthesisMessages("t", synthesisInput("technical_review"));
     for (const { user } of [i, c, s]) {
-      expect(user).not.toMatch(/사내 문서 근거 컨텍스트/);
+      expect(user).not.toMatch(/사내 문서 근거 후보/);
     }
   });
 });

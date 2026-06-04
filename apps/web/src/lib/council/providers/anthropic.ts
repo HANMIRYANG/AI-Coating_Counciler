@@ -65,8 +65,9 @@ export class AnthropicProviderAdapter implements AiProviderAdapter {
         {
           model,
           system,
-          max_tokens: 2048,
-          temperature: 0.2,
+          max_tokens: anthropicMaxTokens(),
+          // Do not pin temperature. Newer Claude models reject non-default
+          // temperature values, so rely on the model default.
           messages: [{ role: "user", content: user }],
         },
         { signal: opts.abortSignal },
@@ -137,6 +138,11 @@ export class AnthropicProviderAdapter implements AiProviderAdapter {
     const { raw, parsed } = await this.messageJson(system, user, options);
     return validateOrThrow(FinalAnswerSchema, parsed, raw);
   }
+}
+
+function anthropicMaxTokens(): number {
+  const n = Number(process.env.ANTHROPIC_MAX_TOKENS);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 4096;
 }
 
 function validateOrThrow<T>(

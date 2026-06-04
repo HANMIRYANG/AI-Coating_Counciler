@@ -46,6 +46,7 @@ function quorumTiming(overrides: Partial<TimingConfig> = {}): TimingConfig {
     minOpinionsForMeeting: 2,
     minCritiquesForSynthesis: 2,
     roundQuorumGraceMs: 150,
+    requiredProvidersForQuorum: [],
     ...overrides,
   };
 }
@@ -282,8 +283,14 @@ describe("Audit #2 — cancellation path hardening", () => {
     await o.run(sess.id);
 
     // Read synchronously after run() — NO drain.
-    const final = await store.get(sess.id);
+    let final = await store.get(sess.id);
     expect(initialCall(final, "openai")?.status).toBe("cancelled");
+
+    // After the cancelled task unwinds in the background, it must preserve the
+    // cancellation reason instead of overwriting it as an unknown failure.
+    await drain(250);
+    final = await store.get(sess.id);
+    expect(initialCall(final, "openai")?.errorType).toBe("cancelled");
   });
 
   it("records cancelled promptly when a provider is cancelled mid retry-backoff", async () => {

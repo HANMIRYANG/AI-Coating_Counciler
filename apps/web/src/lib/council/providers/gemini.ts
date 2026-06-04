@@ -66,7 +66,8 @@ export class GeminiProviderAdapter implements AiProviderAdapter {
       model: modelName,
       systemInstruction: system,
       generationConfig: {
-        temperature: 0.2,
+        // Keep generation parameters minimal. Some model families reject
+        // pinned sampling knobs; JSON output is enforced by MIME type.
         responseMimeType: "application/json",
       },
     });

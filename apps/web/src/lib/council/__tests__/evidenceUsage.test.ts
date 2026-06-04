@@ -84,16 +84,75 @@ describe("applyEvidenceUsage", () => {
 
   it("ok preview WITH explicit model mapping is respected (incl. sufficient)", () => {
     const modelled = answer({
-      evidenceUsed: [
-        { chunkId: "m1", filename: "f.md", chunkIndex: 0 },
-      ],
-      coveredClaims: [{ claim: "x", evidenceChunkIds: ["m1"] }],
+      missingEvidence: [],
+      coveredClaims: [{ claim: "방오 성능 시험 결과가 있습니다.", evidenceChunkIds: ["E1"] }],
       evidenceCoverageStatus: "sufficient",
     });
     const out = applyEvidenceUsage(modelled, preview("ok", [candidate(0)]));
     expect(out.evidenceCoverageStatus).toBe("sufficient");
-    expect(out.evidenceUsed).toEqual(modelled.evidenceUsed);
-    expect(out.coveredClaims).toEqual(modelled.coveredClaims);
+    expect(out.evidenceUsed.map((r) => r.chunkId)).toEqual(["chunk0"]);
+    expect(out.coveredClaims).toEqual([
+      {
+        claim: "방오 성능 시험 결과가 있습니다.",
+        evidenceChunkIds: ["chunk0"],
+      },
+    ]);
+    expect(out.uncoveredClaims).toEqual([]);
+  });
+
+  it("ok preview resolves bracketed evidence IDs and de-dupes refs", () => {
+    const modelled = answer({
+      missingEvidence: [],
+      coveredClaims: [
+        {
+          claim: "두 후보가 같은 주장을 보강합니다.",
+          evidenceChunkIds: ["[E1]", "근거 E2", "E1"],
+        },
+      ],
+      evidenceCoverageStatus: "sufficient",
+    });
+    const out = applyEvidenceUsage(
+      modelled,
+      preview("ok", [candidate(0), candidate(1)]),
+    );
+    expect(out.evidenceUsed.map((r) => r.chunkId)).toEqual(["chunk0", "chunk1"]);
+    expect(out.coveredClaims[0].evidenceChunkIds).toEqual([
+      "chunk0",
+      "chunk1",
+    ]);
+  });
+
+  it("ok preview downgrades invented evidence IDs into uncovered claims", () => {
+    const modelled = answer({
+      missingEvidence: [],
+      coveredClaims: [
+        { claim: "존재하지 않는 근거에 연결된 주장", evidenceChunkIds: ["E99"] },
+      ],
+      uncoveredClaims: ["모델이 이미 표시한 미근거 주장"],
+      evidenceCoverageStatus: "sufficient",
+    });
+    const out = applyEvidenceUsage(modelled, preview("ok", [candidate(0)]));
+    expect(out.evidenceCoverageStatus).toBe("partial");
+    expect(out.evidenceUsed).toEqual([]);
+    expect(out.coveredClaims).toEqual([]);
+    expect(out.uncoveredClaims).toEqual([
+      "모델이 이미 표시한 미근거 주장",
+      "존재하지 않는 근거에 연결된 주장",
+    ]);
+  });
+
+  it("ok preview downgrades sufficient when missing evidence remains", () => {
+    const modelled = answer({
+      coveredClaims: [{ claim: "근거 연결 주장", evidenceChunkIds: ["E1"] }],
+      evidenceCoverageStatus: "sufficient",
+    });
+    const out = applyEvidenceUsage(modelled, preview("ok", [candidate(0)]));
+    expect(out.evidenceCoverageStatus).toBe("partial");
+    expect(out.coveredClaims[0].evidenceChunkIds).toEqual(["chunk0"]);
+    expect(out.uncoveredClaims).toEqual([
+      "최신 시험성적서",
+      "장기 신뢰성 데이터",
+    ]);
   });
 
   it("no_matches → no_evidence with uncovered claims, no references", () => {

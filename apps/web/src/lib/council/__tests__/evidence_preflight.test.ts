@@ -15,6 +15,7 @@ import { CouncilOrchestrator, defaultTimingConfig, type TimingConfig } from "../
 import { createMemorySessionStore, newSessionId, type SessionRecord } from "../store";
 import type { ProviderId, EvidenceMode, EvidenceContext } from "../types";
 import type { AiProviderAdapter } from "../provider";
+import { FinalAnswerSchema } from "../schemas";
 import { DocumentServiceError } from "@/lib/documents/service";
 import type {
   EvidenceBundle,
@@ -320,6 +321,69 @@ describe("evidence context injection into provider calls", () => {
     ].filter(Boolean);
     expect(synthContexts.length).toBeGreaterThanOrEqual(1);
     expect(synthContexts[0]?.retrievalStatus).toBe("ok");
+  });
+
+  it("translates synthesis evidence IDs into final claim coverage refs", async () => {
+    const store = createMemorySessionStore();
+    const sess = session("internal_docs");
+    await store.create(sess);
+
+    const { registry: reg } = capturingRegistry();
+    reg.anthropic = {
+      ...reg.anthropic,
+      generateSynthesis: async (input, opts) => {
+        void opts;
+        return FinalAnswerSchema.parse({
+          conclusion: "근거 후보를 기준으로 조건부 검토 가능합니다.",
+          finalMarkdown: "근거 후보 E1에 연결된 최종 답변입니다.",
+          businessReadyAnswer: "제공 문서 기준으로 조건부 검토 가능합니다.",
+          internalMemo: "E1 기반 claim 매핑 확인.",
+          evidenceBackedClaims: ["방오 코팅의 부착 성능 시험 결과가 있습니다."],
+          missingEvidence: [],
+          riskLevel: "low",
+          confidenceScore: 0.7,
+          coveredClaims: [
+            {
+              claim: "방오 코팅의 부착 성능 시험 결과가 있습니다.",
+              evidenceChunkIds: ["E1"],
+            },
+          ],
+          uncoveredClaims: [],
+          evidenceCoverageStatus: "sufficient",
+        });
+      },
+    };
+
+    const o = new CouncilOrchestrator(
+      reg,
+      fastTiming(),
+      store,
+      stubEvidence(
+        vi.fn().mockResolvedValue({
+          normalizedQuery: "q",
+          retrievalMode: "internal_documents_keyword",
+          retrievalStatus: "ok",
+          count: 1,
+          candidates: [candidate(0)],
+        }),
+      ),
+    );
+    await o.run(sess.id);
+
+    const final = await store.get(sess.id);
+    const answer = final?.finalAnswer;
+    if (!answer || answer.answerKind !== "standard") {
+      throw new Error("expected standard final answer");
+    }
+    expect(answer.evidenceCoverageStatus).toBe("sufficient");
+    expect(answer.evidenceUsed.map((r) => r.chunkId)).toEqual(["c0"]);
+    expect(answer.coveredClaims).toEqual([
+      {
+        claim: "방오 코팅의 부착 성능 시험 결과가 있습니다.",
+        evidenceChunkIds: ["c0"],
+      },
+    ]);
+    expect(answer.uncoveredClaims).toEqual([]);
   });
 
   it("ai_only passes NO evidence context (undefined) into provider calls", async () => {

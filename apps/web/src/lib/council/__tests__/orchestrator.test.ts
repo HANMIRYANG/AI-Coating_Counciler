@@ -116,6 +116,34 @@ describe("CouncilOrchestrator", () => {
     expect(final?.opinions.length).toBe(3);
   });
 
+  it("waits for required OpenAI opinion before quorum grace can advance", async () => {
+    const store = getSessionStore();
+    const sess = newSession();
+    await store.create(sess);
+
+    const o = new CouncilOrchestrator(
+      registry({ geminiDelay: 20, claudeDelay: 20, openaiDelay: 180 }),
+      fastTiming({
+        providerTimeoutMs: 600,
+        roundTimeoutMs: 900,
+        roundQuorumGraceMs: 40,
+        requiredProvidersForQuorum: ["openai"],
+      }),
+      store,
+    );
+
+    await o.run(sess.id);
+
+    const final = await store.get(sess.id);
+    expect(final?.opinions.some((op) => op.providerId === "openai")).toBe(
+      true,
+    );
+    const openaiInitial = final?.providerCalls.find(
+      (c) => c.providerId === "openai" && c.round === "initial",
+    );
+    expect(openaiInitial?.status).toBe("succeeded");
+  });
+
   it("does not block when one provider hangs forever", async () => {
     const store = getSessionStore();
     const sess = newSession();
