@@ -14,11 +14,13 @@
 //   a typed message so the caller knows to configure DATABASE_URL +
 //   migrations rather than retrying blindly.
 //
-// Scope reminder (Step 3/4 foundation):
-//   No embeddings, no retrieval, no orchestrator wiring. Rich metadata
-//   (issuer / testMethod / etc.) is validated at the API boundary and
-//   persisted into `Document.metadata`; it is surfaced in the GET summary
-//   but is not yet used for retrieval.
+// Scope reminder:
+//   This route is text intake + list ONLY — it does not run retrieval. (At
+//   intake DocumentService best-effort embeds chunks; retrieval — keyword /
+//   vector / hybrid — happens elsewhere via the evidence bundle.) Rich metadata
+//   (issuer / testMethod / etc.) is validated at the API boundary, persisted
+//   into `Document.metadata`, surfaced in the GET summary, and used as a filter
+//   by search / evidence retrieval.
 
 import { NextResponse } from "next/server";
 

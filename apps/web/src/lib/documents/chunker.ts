@@ -25,8 +25,9 @@
 //     A markdown-aware tier can layer on top later — paragraph splitting is
 //     a sound first cut that already keeps lists and tables intact when
 //     they are not separated by blank lines.
-//   - It does not emit embeddings or vectors. The persistence layer leaves
-//     `DocumentChunk.embedding` null.
+//   - It does not emit embeddings or vectors itself. Embedding happens in the
+//     service layer at persistence time (lib/documents/embeddings.ts), which
+//     fills `DocumentChunk.embedding` best-effort.
 
 export type Chunk = {
   /** 0-based emission order. */

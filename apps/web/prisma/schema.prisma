@@ -14,9 +14,10 @@
 //   ProviderAttemptRecord    ↔  ProviderAttemptLog
 //
 // The Document / DocumentChunk models back the Phase 2 document layer.
-// Upload (inline text + Blob originals), PDF/DOCX parsing, and OCR fallback
-// are implemented; embedding / vector (semantic) RAG is not (the `embedding`
-// column is unused — keyword search only).
+// Upload (inline text + Blob originals), PDF/DOCX parsing, OCR fallback, and
+// semantic retrieval are implemented: chunks are embedded into
+// `DocumentChunk.embedding` (LE Float32) for vector + hybrid search via
+// app-level cosine. A pgvector index is the remaining scale step.
 //
 // `ProviderAttemptLog` mirrors the per-try forensic log — it is admin /
 // debug payload and must NEVER be exposed in the public recent-session
@@ -291,7 +292,8 @@ model ProviderAttemptLog {
 // ─────────────────────────────────────────────────────────────────────
 // Phase 2 document layer for RAG over internal technical documents.
 // Implemented: text/Blob upload, PDF/DOCX parsing, OCR fallback, deterministic
-// chunking, keyword search. NOT yet: embedding / vector (semantic) retrieval.
+// chunking, and keyword + vector/hybrid (embedding) retrieval. NOT yet: a
+// pgvector index (app-level cosine over DocumentChunk.embedding for now).
 // ─────────────────────────────────────────────────────────────────────
 
 model Document {
@@ -304,16 +306,17 @@ model Document {
   version      String?
   status       String   @default("uploaded")
   // Validated intake metadata (issuer / testMethod / substrate / etc.),
-  // shaped by `DocumentMetadataSchema`. Persisted at intake; not yet used
-  // for retrieval. Unknown keys are stripped by the Zod schema before this
-  // column is written.
+  // shaped by `DocumentMetadataSchema`. Surfaced in list summaries and used as
+  // exact filters in the keyword + vector candidate scans. Unknown keys are
+  // stripped by the Zod schema before this column is written.
   metadata     Json?
 
-  // Original-file storage (Step 14, Vercel Blob foundation). Populated when a
-  // large binary original (PDF/DOCX/etc.) is uploaded via the client-upload
-  // flow. NULL for the existing inline text/markdown intake path. The blob
-  // URL is internal — NOT exposed in list/search/evidence responses. No
-  // extraction/parsing/RAG over these originals yet.
+  // Original-file storage (Step 14, Vercel Blob). Populated when a large binary
+  // original (PDF/DOCX/etc.) is uploaded via the client-upload flow. NULL for
+  // the existing inline text/markdown intake path. The blob URL is internal —
+  // NOT exposed in list/search/evidence responses. Extractable originals are
+  // registered as `needs_extraction` and lazily extracted + chunked (+ embedded)
+  // on demand via POST /api/documents/:id/extract.
   originalBlobUrl         String?
   originalBlobPath        String?
   originalBlobSizeBytes   Int?

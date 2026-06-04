@@ -12,10 +12,11 @@
 // prompts.ts `formatEvidenceContextBlock`), and `internal_docs_web` also
 // fetches user-provided official-source URLs server-side (sourceFetch.ts).
 // PDF/DOCX parsing + OCR (extract.ts) feed extracted chunks into the same
-// keyword search this preview is built on.
+// retrieval this preview is built on (keyword + vector/hybrid via embeddings;
+// EVIDENCE_RETRIEVAL_MODE).
 //
-// Still unimplemented: embeddings / vector (semantic) search, and verified-
-// citation grounding / auto fact-check over the evidence.
+// Still unimplemented: a pgvector index (vector retrieval uses app-level
+// cosine), and verified-citation grounding / auto fact-check over the evidence.
 //
 // This module is pure (types + deterministic mappers + a bounded timeout
 // knob). It imports ONLY types from the documents layer, so pulling it into

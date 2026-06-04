@@ -1,6 +1,8 @@
 // GET /api/documents/evidence?query=...
-//   Normalizes internal keyword document-search hits into bounded
-//   evidence/citation candidates (see lib/documents/evidence-bundle.ts).
+//   Runs internal document retrieval via EvidenceBundleService and normalizes
+//   the hits into bounded evidence/citation candidates (see
+//   lib/documents/evidence-bundle.ts). The retrieval path is selectable by
+//   EVIDENCE_RETRIEVAL_MODE (keyword / vector / hybrid, default hybrid).
 //   Returns the normalized query, the candidates, a count, and retrieval
 //   mode/status metadata. Never returns full chunk bodies.
 //
@@ -12,10 +14,10 @@
 //                                            retrievalMode, retrievalStatus,
 //                                            count, candidates }
 //
-// Scope reminder (Step 6 foundation):
-//   No embeddings, no vector similarity, no external fetching, no final RAG
-//   retrieval, no orchestrator wiring. This normalizes keyword hits into the
-//   evidence vocabulary the orchestrator will later consume.
+// Scope reminder: this is internal-document retrieval only. No external web
+// fetching happens here (that is internal_docs_web / sourceFetch.ts), and
+// candidates are NOT enforced as final verified citations (no grounding /
+// fact-check).
 
 import { NextResponse } from "next/server";
 

@@ -18,8 +18,9 @@
 // capabilities below exist elsewhere in the codebase, just not here):
 //   - No web crawling / HTTP fetch here. User-provided official-source URL
 //     fetch lives in `sourceFetch.ts` (internal_docs_web).
-//   - No document upload / keyword search / embeddings here. Upload + keyword
-//     RAG live in `lib/documents/*`; embeddings remain unimplemented.
+//   - No document upload / search / embeddings here. Upload + keyword/vector/
+//     hybrid retrieval live in `lib/documents/*` (embeddings via
+//     lib/documents/embeddings.ts; app-level cosine, no pgvector index yet).
 //   - No orchestrator wiring here. internal_docs / internal_docs_web are wired
 //     via `evidencePreview.ts` + the orchestrator preflight, not this module.
 //   - This module MUST NOT import the orchestrator, rate limiter,

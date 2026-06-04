@@ -21,11 +21,12 @@
 | `GET`  | `/api/evidence-sources` | `app/api/evidence-sources/route.ts` | 카탈로그/정책 메타데이터. `retrievalEnabled=false` 는 **카탈로그 기반 자동 출처 조회**만 가리킴 — 사용자 제공 URL fetch 는 `internal_docs_web` 세션에서 동작. |
 | `POST` | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** text/plain·text/markdown 만 수용, 결정적 chunking 후 Prisma 영속화. PDF/DOCX/이미지 → 415. |
 | `GET`  | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** 문서 summary 목록 (chunk 본문 미포함). |
-| `GET`  | `/api/documents/search?q=...` | `app/api/documents/search/route.ts` | **Phase 2 foundation 한정.** 영속화된 chunk 본문에 대한 결정적 키워드 검색 + metadata 필터. 임베딩/벡터 검색 아님. |
-| `GET`  | `/api/documents/evidence?query=...` | `app/api/documents/evidence/route.ts` | **Phase 2 foundation 한정.** 키워드 검색 결과를 내부문서 evidence 후보로 정규화. (orchestrator 는 이 엔드포인트를 직접 호출하지 않고, 동일 evidence bundle 을 세션 preflight 에서 사용.) |
+| `GET`  | `/api/documents/search?q=...` | `app/api/documents/search/route.ts` | **Phase 2.** 영속화된 chunk 본문에 대한 결정적 **키워드 전용** 검색 + metadata 필터. (의미 기반 벡터/하이브리드는 evidence 경로에서 사용 — 이 엔드포인트는 키워드 전용 유지.) |
+| `GET`  | `/api/documents/evidence?query=...` | `app/api/documents/evidence/route.ts` | **Phase 2.** 내부문서 검색 결과를 evidence 후보로 정규화. retrieval 은 `EVIDENCE_RETRIEVAL_MODE`(keyword/vector/**hybrid** 기본)로 선택. (orchestrator 는 이 엔드포인트를 직접 호출하지 않고, 동일 evidence bundle 을 세션 preflight 에서 사용.) |
 | `POST` | `/api/documents/parse` | `app/api/documents/parse/route.ts` | **Phase 2.** 멀티파트 파일(PDF/DOCX/이미지) 업로드 → text-layer 추출 + (텍스트 없으면) OCR fallback → 인라인 intake 로 chunking·영속화. 미지원 타입 → 415. `extractErrorToStatus` 로 상태코드 매핑. |
 | `POST` | `/api/documents/:id/extract` | `app/api/documents/[id]/extract/route.ts` | **Phase 2.** Blob 원본(`needs_extraction`) 지연 추출 — private Blob 을 서버에서 가져와 text-layer/OCR 추출 후 chunk 부착 → `chunked` 승격. OCR 미설정 → 503. |
 | `POST` | `/api/documents/blob/upload` | `app/api/documents/blob/upload/route.ts` | **Phase 2.** Vercel Blob client-upload 핸들러 — 대용량 원본(PDF/DOCX/이미지) 저장. 추출 가능 타입은 `status: needs_extraction`(그 외 `original_uploaded`)로 등록되며, 추출/chunking 은 `/api/documents/:id/extract` 로 지연 수행. `BLOB_READ_WRITE_TOKEN` 필요. |
+| `POST` | `/api/documents/embeddings/backfill?limit=N` | `app/api/documents/embeddings/backfill/route.ts` | **Phase 2.** 임베딩이 없는 청크를 bounded 배치로 임베딩(벡터/하이브리드 검색용). `remaining` 0 될 때까지 반복 호출. write-token 게이트. |
 
 > 별도의 `GET /api/council-sessions/:id/final-answer` 엔드포인트는 **없습니다**. 최종 답변은 `GET /api/council-sessions/:id` 응답의 `finalAnswer` 필드로 함께 반환됩니다.
 > Phase 2 후보: `POST /api/council-sessions/:id/providers/:providerId/retry`, `GET /api/council-sessions/:id/events` (SSE) — 둘 다 미구현.
@@ -174,7 +175,7 @@ Response `200` (요약):
   - `evidenceMode: "ai_only"` → `retrievalStatus: "not_requested"`, 후보 없음 (기본 동작 동일).
   - `internal_docs` (및 `internal_docs_web`) → orchestrator 가 세션 시작 시 **bounded preflight** 로 내부 evidence bundle 을 1회 조회. 결과: `ok` / `no_matches`, DB 미가용·timeout 시 `unavailable`, 기타 오류 시 `failed`. **어떤 경우에도 council 세션은 계속 진행됩니다.**
   - `candidates` 는 최대 5개로 bounded, **snippet 만 포함하고 chunk 전체 본문은 절대 포함하지 않습니다**. `count` 는 전체 매칭 수.
-  - **Step 8**: `internal_docs` 세션에서는 이 preview 후보가 Round 1/2/3 provider 프롬프트에 **읽기 전용 evidence 컨텍스트**(키워드-스니펫)로 주입됩니다. 단, 이는 검증된 citation 이 아니며 출력 JSON 스키마는 변경되지 않습니다. 의미 기반 RAG / citation 렌더링은 여전히 미구현.
+  - **Step 8**: `internal_docs` 세션에서는 이 preview 후보(키워드+벡터 하이브리드 검색 결과)가 Round 1/2/3 provider 프롬프트에 **읽기 전용 evidence 컨텍스트**로 주입됩니다. 단, 이는 검증된 확정 citation 이 아니며 출력 JSON 스키마는 변경되지 않습니다. 검증된 citation 강제/렌더링은 여전히 미구현(다음 슬라이스).
   - 레거시 세션(preflight 이전 생성)은 `null`. recent-list summary 에는 포함되지 않음(목록 비용 보호).
 - `404 not_found` — 세션 없음.
 
@@ -341,13 +342,13 @@ Response `200`:
 
 - 결과는 score 내림차순 → `documentId` 오름차순 → `chunkIndex` 오름차순으로 결정적 정렬.
 - chunk 전체 본문은 반환하지 않고 **bounded snippet** (기본 ≤160자, 첫 매치 주변) 만 포함.
-- **미구현**: 임베딩 / 벡터 유사도, evidence bundle 조립, orchestrator 연결. 후보 chunk 는 결정적 순서로 상한(200) 까지만 스캔 후 in-process 정렬.
+- 이 엔드포인트는 **키워드 전용**이다. 의미 기반 벡터/하이브리드 검색과 evidence bundle 조립·orchestrator preflight 연결은 evidence 경로(`/api/documents/evidence` + 세션 preflight)에서 제공된다. 후보 chunk 는 결정적 순서로 상한(200) 까지만 스캔 후 in-process 정렬.
 
 ```http
 GET /api/documents/evidence?query=...&documentType=...&productName=...&issuer=...&limit=N
 ```
 
-`GET /api/documents/search` 결과를 **내부문서 evidence 후보**로 정규화합니다 (`lib/documents/evidence-bundle.ts`). 키워드 검색을 내부적으로 호출한 뒤 각 hit 를 council 의 evidence 어휘(`lib/council/evidence.ts`)로 매핑합니다.
+내부문서 검색 결과를 **내부문서 evidence 후보**로 정규화합니다 (`lib/documents/evidence-bundle.ts`). retrieval 경로는 `EVIDENCE_RETRIEVAL_MODE`(keyword/vector/**hybrid** 기본)로 선택되며, 각 hit 를 council 의 evidence 어휘(`lib/council/evidence.ts`)로 매핑합니다.
 
 - `query` **필수**. 비어있거나 공백뿐이면 `400 invalid_request`. (검색의 `q` 와 동일 의미 — orchestrator-facing 이름)
 - 선택 metadata 필터(`documentType` / `productName` / `issuer`)와 `limit` (기본 10, 최대 50) 은 검색과 동일하게 동작.
@@ -382,7 +383,7 @@ Response `200`:
 - 각 후보는 내부문서 기본값으로 `trustLevel: "uploaded_copy"` (caveat 동반 시 business-citable) + `verificationStatus: "auto_extracted"` 를 부여받음. 사람이 후속 검토로 승격 가능.
 - `retrievalStatus` 는 후보가 있으면 `ok`, 없으면 `no_matches`.
 - chunk 전체 본문은 포함하지 않고 bounded snippet 만 전달. 정렬 순서는 검색 결과 순서를 그대로 보존.
-- **미구현**: 임베딩 / 벡터 유사도, 의미 기반 최종 RAG retrieval. (orchestrator 는 이 HTTP 엔드포인트를 직접 호출하지는 않지만, 동일한 내부 evidence bundle 은 세션 preflight(Step 7/8)에서 사용된다.)
+- retrieval 은 `EVIDENCE_RETRIEVAL_MODE`(keyword/vector/**hybrid** 기본)로 키워드·벡터·하이브리드 선택. **미구현**: pgvector 인덱스(앱레벨 코사인 사용), 검증된 citation 강제/grounding. (orchestrator 는 이 HTTP 엔드포인트를 직접 호출하지는 않지만, 동일한 내부 evidence bundle 은 세션 preflight(Step 7/8)에서 사용된다.)
 
 ```http
 POST /api/documents/blob/upload
@@ -398,7 +399,7 @@ Content-Type: application/json
 - 클라이언트는 `@vercel/blob/client` 의 `upload(pathname, file, { handleUploadUrl: "/api/documents/blob/upload", clientPayload })` 로 호출합니다. `pathname` 은 `buildOriginalBlobPathname(filename)` 사용 권장.
 - **원본 blob URL 은 내부값** 입니다 — 목록/검색/evidence 응답에 노출하지 않습니다.
 - **지연 추출**: 저장된 원본은 `POST /api/documents/:id/extract` 로 text-layer/OCR 추출 후 chunk 부착 → `chunked` 승격. (OCR 미설정 시 503 `ocr_unavailable`.)
-- **미구현**: 임베딩/벡터(의미 기반) 검색, 공개 다운로드 UI. 기존 인라인 `text/plain`·`text/markdown` intake(256KB)는 변경 없음.
+- **미구현**: pgvector 인덱스(앱레벨 코사인 사용), Blob 원본 공개 다운로드 UI. 기존 인라인 `text/plain`·`text/markdown` intake(256KB)는 변경 없음.
 
 ---
 
