@@ -160,3 +160,51 @@ describe("buildFinalEvidenceCoverageView — retrieval guard", () => {
     expect(view.guard).toBeUndefined();
   });
 });
+
+describe("buildFinalEvidenceCoverageView — verified citations", () => {
+  it("builds citation rows (ready) when guard is business-ready", () => {
+    const view = buildFinalEvidenceCoverageView({
+      ...coverage({
+        evidenceCoverageStatus: "sufficient",
+        evidenceUsed: [ref],
+        coveredClaims: [{ claim: "방오 성능 검토 가능", evidenceChunkIds: ["chunk_SECRET"] }],
+      }),
+      retrievalGuard: {
+        guardStatus: "passed",
+        reasons: [],
+        requiredEvidence: true,
+        businessCitationReady: true,
+        recommendedAction: "발송 가능",
+      },
+    });
+    expect(view.citations).toBeDefined();
+    expect(view.citations?.citationReady).toBe(true);
+    expect(view.citations?.readyLabel).toBe("인용 가능");
+    expect(view.citations?.tone).toBe("good");
+    const row = view.citations?.citedClaims[0];
+    expect(row?.label).toBe("C1");
+    expect(row?.evidence[0].title).toBe("kcl-report.md#2");
+    // no internal chunk id surfaced
+    expect(JSON.stringify(view.citations)).not.toContain("chunk_SECRET");
+  });
+
+  it("marks citations 검토 필요 when there is no business-ready guard", () => {
+    const view = buildFinalEvidenceCoverageView(
+      coverage({
+        evidenceCoverageStatus: "partial",
+        evidenceUsed: [ref],
+        coveredClaims: [{ claim: "x", evidenceChunkIds: ["chunk_SECRET"] }],
+        uncoveredClaims: ["미연결 주장"],
+      }),
+    );
+    expect(view.citations?.citationReady).toBe(false);
+    expect(view.citations?.readyLabel).toBe("검토 필요");
+    expect(view.citations?.unresolvedClaims).toEqual(["미연결 주장"]);
+  });
+
+  it("omits citations for ai_only (not_requested → hidden view)", () => {
+    const view = buildFinalEvidenceCoverageView(coverage({}));
+    expect(view.visible).toBe(false);
+    expect(view.citations).toBeUndefined();
+  });
+});

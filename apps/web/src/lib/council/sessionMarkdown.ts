@@ -16,6 +16,7 @@ import type {
   IdeationFinalAnswer,
   SynthesisResult,
 } from "./schemas";
+import { buildVerifiedCitations, type CitationInput } from "./verifiedCitations";
 
 // Minimal structural input — a completed session snapshot. `finalAnswer` is
 // required (the route returns 409 not_ready when it is absent).
@@ -78,6 +79,47 @@ function retrievalGuardLines(
     lines.push(...guard.reasons.map((r) => `  - ${r}`));
   }
   return lines;
+}
+
+// Deterministic "Verified Citations" section, shared by all answer kinds.
+// Re-presents validated claim→evidence mappings (not legal certification).
+// Quiet (returns []) when there are no covered/uncovered claims to show.
+function verifiedCitationsSection(a: CitationInput): string[] {
+  const c = buildVerifiedCitations(a);
+  if (c.citedClaims.length === 0 && c.unresolvedClaims.length === 0) return [];
+
+  const claimLines =
+    c.citedClaims.length === 0
+      ? ["- 없음"]
+      : c.citedClaims.map((cc) => {
+          const ev =
+            cc.evidence.length > 0
+              ? cc.evidence
+                  .map(
+                    (e) =>
+                      `${e.title} (신뢰수준 ${e.trustLevel} · ${e.verificationStatus})`,
+                  )
+                  .join(", ")
+              : "없음";
+          return `- [${cc.label}] ${cc.claim} — 근거: ${ev}`;
+        });
+
+  return [
+    "## 검증된 인용 (Verified Citations)",
+    "",
+    `- 인용 준비 상태: ${c.citationReady ? "가능" : "검토 필요"}`,
+    "",
+    "### 근거 연결 주장",
+    "",
+    ...claimLines,
+    "",
+    "### 근거 미연결 주장",
+    "",
+    ...(c.unresolvedClaims.length > 0
+      ? c.unresolvedClaims.map((u) => `- ${u}`)
+      : ["- 없음"]),
+    "",
+  ];
 }
 
 function providerSummaryLines(
@@ -165,6 +207,7 @@ export function buildSessionMarkdown(session: ExportableSession): string {
     "",
     ...bulletList(a.uncoveredClaims),
     "",
+    ...verifiedCitationsSection(a),
     "## Provider 요약",
     "",
     ...providerSummaryLines(a.providerSummary),
@@ -261,6 +304,7 @@ function buildIdeationMarkdown(
     "",
     ...bulletList(a.uncoveredClaims),
     "",
+    ...verifiedCitationsSection(a),
     "## Provider 요약",
     "",
     ...providerSummaryLines(a.providerSummary),
@@ -347,6 +391,7 @@ function buildChecklistMarkdown(
     "",
     ...bulletList(a.uncoveredClaims),
     "",
+    ...verifiedCitationsSection(a),
     "## Provider 요약",
     "",
     ...providerSummaryLines(a.providerSummary),

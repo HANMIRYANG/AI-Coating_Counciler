@@ -10,6 +10,7 @@
 
 import type { FinalAnswer, GuardStatus } from "@/lib/council/schemas";
 import { GUARD_STATUS_LABEL } from "@/lib/council/retrievalGuard";
+import { buildVerifiedCitations } from "@/lib/council/verifiedCitations";
 
 export type FinalCoverageTone = "good" | "info" | "muted" | "warn";
 
@@ -33,6 +34,25 @@ export type GuardView = {
   reasons: string[];
 };
 
+export type CitationRowView = {
+  label: string; // C1, C2, …
+  claim: string;
+  evidence: {
+    label: string; // E1, E2, …
+    title: string; // filename#chunkIndex (no internal id, no body)
+    trustLevel: string;
+    verificationStatus: string;
+  }[];
+};
+
+export type CitationsView = {
+  citationReady: boolean;
+  readyLabel: string;
+  tone: FinalCoverageTone;
+  citedClaims: CitationRowView[];
+  unresolvedClaims: string[];
+};
+
 export type FinalEvidenceCoverageView = {
   // false for not_requested (ai_only) → quiet UI.
   visible: boolean;
@@ -45,6 +65,8 @@ export type FinalEvidenceCoverageView = {
   uncoveredClaims: string[];
   // Retrieval Guard verdict (present only when the answer carries one).
   guard?: GuardView;
+  // Verified-citation summary (present only when there are claims to cite).
+  citations?: CitationsView;
 };
 
 const GUARD_TONE: Record<GuardStatus, FinalCoverageTone> = {
@@ -109,6 +131,36 @@ function buildGuardView(
   };
 }
 
+function buildCitationsView(
+  answer: Partial<CoverageFields>,
+): CitationsView | undefined {
+  const c = buildVerifiedCitations({
+    evidenceUsed: answer.evidenceUsed ?? [],
+    coveredClaims: answer.coveredClaims ?? [],
+    uncoveredClaims: answer.uncoveredClaims ?? [],
+    retrievalGuard: answer.retrievalGuard,
+  });
+  if (c.citedClaims.length === 0 && c.unresolvedClaims.length === 0) {
+    return undefined;
+  }
+  return {
+    citationReady: c.citationReady,
+    readyLabel: c.citationReady ? "인용 가능" : "검토 필요",
+    tone: c.citationReady ? "good" : "warn",
+    citedClaims: c.citedClaims.map((cc) => ({
+      label: cc.label,
+      claim: cc.claim,
+      evidence: cc.evidence.map((e) => ({
+        label: e.label,
+        title: e.title,
+        trustLevel: e.trustLevel,
+        verificationStatus: e.verificationStatus,
+      })),
+    })),
+    unresolvedClaims: c.unresolvedClaims,
+  };
+}
+
 /**
  * Derive the coverage block view-model from a final answer.
  *
@@ -146,5 +198,6 @@ export function buildFinalEvidenceCoverageView(
     })),
     uncoveredClaims,
     guard: buildGuardView(answer?.retrievalGuard),
+    citations: buildCitationsView(answer ?? {}),
   };
 }

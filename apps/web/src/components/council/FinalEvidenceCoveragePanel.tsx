@@ -99,6 +99,40 @@ export function FinalEvidenceCoveragePanel({
         </>
       )}
 
+      {view.citations && (
+        <>
+          <b>
+            검증된 인용{" "}
+            <span
+              className={`badge evidence-coverage-${view.citations.tone}`}
+            >
+              {view.citations.readyLabel}
+            </span>
+          </b>
+          {view.citations.citedClaims.length > 0 && (
+            <ul>
+              {view.citations.citedClaims.map((c) => (
+                <li key={c.label}>
+                  [{c.label}] {c.claim}
+                  <span className="muted">
+                    {" "}
+                    — 근거:{" "}
+                    {c.evidence.length > 0
+                      ? c.evidence
+                          .map(
+                            (e) =>
+                              `${e.title} (${e.trustLevel}·${e.verificationStatus})`,
+                          )
+                          .join(", ")
+                      : "없음"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+
       <p className="muted">
         ※ 근거 가드는 인용 충분성·유효성에 대한 결정적 게이트이며, 사실의 법적
         인증이 아닙니다. 발송 전 사람 검토를 권장합니다.

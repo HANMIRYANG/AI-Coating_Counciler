@@ -161,6 +161,48 @@ describe("buildSessionMarkdown", () => {
   it("omits the guard section when absent (backward compatible)", () => {
     expect(buildSessionMarkdown(session())).not.toContain("근거 가드");
   });
+
+  it("renders a Verified Citations section with labeled claim→evidence", () => {
+    // Default fixture: one covered claim backed by kcl-report.md #0, one
+    // uncovered claim, and no retrievalGuard → citation not ready.
+    expect(md).toContain("## 검증된 인용 (Verified Citations)");
+    expect(md).toContain("- 인용 준비 상태: 검토 필요");
+    expect(md).toContain(
+      "- [C1] 방오 성능 검토 가능 — 근거: kcl-report.md#0 (신뢰수준 uploaded_copy · auto_extracted)",
+    );
+    expect(md).toContain("### 근거 미연결 주장");
+    expect(md).toContain("- 장기 신뢰성 데이터");
+    // Still no internal chunk id leaked.
+    expect(md).not.toContain("chunk_SECRET");
+  });
+
+  it("marks citations ready when the guard is business-ready", () => {
+    const ready = buildSessionMarkdown(
+      session({
+        finalAnswer: finalAnswer({
+          evidenceCoverageStatus: "sufficient",
+          uncoveredClaims: [],
+          retrievalGuard: {
+            guardStatus: "passed",
+            reasons: [],
+            requiredEvidence: true,
+            businessCitationReady: true,
+            recommendedAction: "발송 가능",
+          },
+        }),
+      }),
+    );
+    expect(ready).toContain("- 인용 준비 상태: 가능");
+  });
+
+  it("omits the citations section when there are no claims (backward compatible)", () => {
+    const empty = buildSessionMarkdown(
+      session({
+        finalAnswer: finalAnswer({ coveredClaims: [], uncoveredClaims: [] }),
+      }),
+    );
+    expect(empty).not.toContain("검증된 인용");
+  });
 });
 
 describe("sessionMarkdownFilename", () => {
