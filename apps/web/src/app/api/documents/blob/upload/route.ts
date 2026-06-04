@@ -41,9 +41,6 @@ function parseDescriptor(
 }
 
 export async function POST(req: Request) {
-  const denied = checkWriteAuth(req);
-  if (denied) return denied;
-
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     return NextResponse.json(
       {
@@ -60,6 +57,19 @@ export async function POST(req: Request) {
     body = (await req.json()) as HandleUploadBody;
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
+  }
+
+  // Gate ONLY the browser-initiated token-generation request with the app
+  // write token. The `blob.upload-completed` event is a SERVER-TO-SERVER
+  // webhook from Vercel Blob — it cannot carry `x-api-write-token`, and
+  // handleUpload independently verifies its authenticity (an HMAC-SHA256
+  // signature on the `x-vercel-signature` header, keyed by
+  // BLOB_READ_WRITE_TOKEN). Gating it here would, with API_WRITE_TOKEN set,
+  // silently drop the completion callback so no Document row is created and
+  // the extract path is left dangling.
+  if (body.type === "blob.generate-client-token") {
+    const denied = checkWriteAuth(req);
+    if (denied) return denied;
   }
 
   try {

@@ -31,9 +31,11 @@ function req(body: unknown, init: { rawBody?: string } = {}) {
 }
 
 const ORIGINAL_TOKEN = process.env.BLOB_READ_WRITE_TOKEN;
+const ORIGINAL_WRITE_TOKEN = process.env.API_WRITE_TOKEN;
 
 beforeEach(() => {
   process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_TESTONLY";
+  delete process.env.API_WRITE_TOKEN;
   handleUploadMock.mockReset();
   recordOriginalUploadMock.mockReset();
 });
@@ -41,6 +43,8 @@ beforeEach(() => {
 afterEach(() => {
   if (ORIGINAL_TOKEN === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
   else process.env.BLOB_READ_WRITE_TOKEN = ORIGINAL_TOKEN;
+  if (ORIGINAL_WRITE_TOKEN === undefined) delete process.env.API_WRITE_TOKEN;
+  else process.env.API_WRITE_TOKEN = ORIGINAL_WRITE_TOKEN;
 });
 
 describe("POST /api/documents/blob/upload", () => {
@@ -171,5 +175,67 @@ describe("POST /api/documents/blob/upload", () => {
         blobPath: "documents/originals/report-abc.pdf",
       }),
     );
+  });
+
+  // With API_WRITE_TOKEN set, the write gate must apply to the browser-driven
+  // token-generation request but NOT to the server-to-server upload-completed
+  // webhook (which cannot send the header and is verified by handleUpload).
+  describe("with API_WRITE_TOKEN configured", () => {
+    beforeEach(() => {
+      process.env.API_WRITE_TOKEN = "write_secret_TESTONLY";
+    });
+
+    it("rejects token generation without the write header (401)", async () => {
+      const res = await POST(req({ type: "blob.generate-client-token" }));
+      expect(res.status).toBe(401);
+      expect(handleUploadMock).not.toHaveBeenCalled();
+    });
+
+    it("allows token generation with a valid write header", async () => {
+      handleUploadMock.mockResolvedValueOnce({
+        type: "blob.generate-client-token",
+        clientToken: "tkn_ok",
+      });
+      const r = new Request("http://localhost/api/documents/blob/upload", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-write-token": "write_secret_TESTONLY",
+        },
+        body: JSON.stringify({ type: "blob.generate-client-token" }),
+      });
+      const res = await POST(r);
+      expect(res.status).toBe(200);
+      expect(handleUploadMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT gate the upload-completed webhook (no header required)", async () => {
+      handleUploadMock.mockImplementationOnce(
+        async (opts: {
+          onUploadCompleted: (p: {
+            blob: { url: string; pathname: string; contentType: string };
+            tokenPayload?: string | null;
+          }) => Promise<void>;
+        }) => {
+          await opts.onUploadCompleted({
+            blob: {
+              url: "https://blob.vercel-storage.com/documents/originals/x-abc.pdf",
+              pathname: "documents/originals/x-abc.pdf",
+              contentType: "application/pdf",
+            },
+            tokenPayload: JSON.stringify({
+              filename: "x.pdf",
+              contentType: "application/pdf",
+              sizeBytes: 10,
+            }),
+          });
+          return { type: "blob.upload-completed", response: "ok" };
+        },
+      );
+      // No x-api-write-token header on purpose.
+      const res = await POST(req({ type: "blob.upload-completed" }));
+      expect(res.status).toBe(200);
+      expect(recordOriginalUploadMock).toHaveBeenCalledTimes(1);
+    });
   });
 });
