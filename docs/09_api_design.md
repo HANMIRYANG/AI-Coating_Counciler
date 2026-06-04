@@ -17,7 +17,7 @@
 | `GET`  | `/api/council-sessions?limit=N` | `app/api/council-sessions/route.ts` | 최근 세션 summary 목록 (newest first) |
 | `GET`  | `/api/council-sessions/:id` | `app/api/council-sessions/[id]/route.ts` | 세션 스냅샷 (의견·비판·**최종 답변** + **evidence preview** 포함). `?debug=1` 옵션. |
 | `POST` | `/api/council-sessions/:id/start` | `app/api/council-sessions/[id]/start/route.ts` | idempotent 명시적 시작 (이미 시작했으면 no-op) |
-| `GET`  | `/api/council-sessions/:id/export?format=markdown` | `app/api/council-sessions/[id]/export/route.ts` | 완료 세션의 안전한 Markdown 내보내기 (최종 답변·내부 메모·근거 커버리지·근거 가드·**검증된 인용** 포함). PDF/DOCX 미구현. |
+| `GET`  | `/api/council-sessions/:id/export?format=markdown` | `app/api/council-sessions/[id]/export/route.ts` | 완료 세션의 안전한 Markdown 내보내기 (최종 답변·내부 메모·근거 커버리지·근거 가드·**검증된 인용·인용 무결성 점검·근거 부록** 포함). PDF/DOCX 미구현. |
 | `GET`  | `/api/evidence-sources` | `app/api/evidence-sources/route.ts` | 카탈로그/정책 메타데이터. `retrievalEnabled=false` 는 **카탈로그 기반 자동 출처 조회**만 가리킴 — 사용자 제공 URL fetch 는 `internal_docs_web` 세션에서 동작. |
 | `POST` | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** text/plain·text/markdown 만 수용, 결정적 chunking 후 Prisma 영속화. PDF/DOCX/이미지 → 415. |
 | `GET`  | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** 문서 summary 목록 (chunk 본문 미포함). |
@@ -172,7 +172,8 @@ Response `200` (요약):
   - `uncoveredClaims`: `string[]`.
   - `evidenceCoverageStatus`: `not_requested | no_evidence | partial | sufficient | unavailable`. ai_only → `not_requested`. internal_docs + ok preview 인데 모델 매핑이 없으면 보수적으로 `partial`. `sufficient` 는 모델이 명시적으로 산출한 경우에만 사용(자동 설정 안 함).
   - `retrievalGuard` (optional, 하위호환): **Retrieval Guard** 결과. `applyEvidenceUsage` 직후 결정적으로 산출되어 부착됨. `{ guardStatus: "not_required"|"passed"|"warning"|"blocked", reasons[], requiredEvidence, businessCitationReady, recommendedAction }`. 답변을 재작성하지 않고 인용 충분성·유효성만 분류한다(법적 인증 아님). `businessCitationReady=true` 는 `sufficient`+검증된 매핑+업체-인용 가능 신뢰수준일 때만.
-  - **검증된 인용(Verified Citations) — 렌더링 레이어** (`lib/council/verifiedCitations.ts`): 위 필드들에서 결정적으로 파생되는 표시/내보내기 전용 뷰(별도 API 필드 아님). covered claim 에 `[C1]` 라벨 + 인용 근거(`filename#chunkIndex`·신뢰수준·검증상태) 연결, uncovered 는 미연결로 분리, `citationReady`는 ① 가드가 발송 가능(businessCitationReady)하고 ② 모든 cited claim 이 ≥1 근거로 해석되며 ③ 미연결(uncovered) 주장이 0건일 때만 true. Markdown export 의 "검증된 인용" 섹션과 근거 커버리지 UI 에 노출. **모델 호출 없음·결정적이며, 법적/사실 인증이나 자동 사실검증이 아니다.** raw chunk 본문/내부 chunkId 비노출.
+  - **검증된 인용(Verified Citations) — 렌더링 레이어** (`lib/council/verifiedCitations.ts`): 위 필드들에서 결정적으로 파생되는 표시/내보내기 전용 뷰(별도 API 필드 아님). covered claim 에 `[C1]` 라벨 + 인용 근거(`filename#chunkIndex`·신뢰수준·검증상태) 연결, uncovered 는 미연결로 분리, `citationReady`는 ① 가드 verdict 가 **passed + businessCitationReady**(둘 다 — 모순 payload 방어)이고 ② 모든 cited claim 이 ≥1 근거로 해석되며 ③ 미연결(uncovered) 주장이 0건일 때만 true. Markdown export 의 "검증된 인용" 섹션과 근거 커버리지 UI 에 노출. **모델 호출 없음·결정적이며, 법적/사실 인증이나 자동 사실검증이 아니다.** raw chunk 본문/내부 chunkId 비노출.
+  - **인용 무결성 점검(Citation Integrity) — 검토/내보내기 준비 레이어** (`lib/council/citationIntegrity.ts`): 검증된 인용에서 결정적으로 파생(별도 API 필드 아님). `integrityStatus` `ready|review_required|blocked`, `reviewRequired`/`exportReady`/`summary`/`recommendations`. **이슈는 심각도로 분류**된다: `problem`(준비 관련 — `unresolved_claim`/`missing_evidence_ref`/`not_business_ready_guard`/`no_cited_claims`/`unguarded_legacy_answer`) vs `advisory`(인라인 라벨 — `body_has_no_citation_labels`/`body_missing_citation_labels`/`body_has_unknown_citation_labels`). 결과는 `problemIssues`/`advisoryIssues`/`problemCount`/`advisoryCount` 와 분리된 권장(`problemRecommendations`/`advisoryRecommendations`)을 제공. `ready`=citationReady, `blocked`=가드 blocked 또는 (근거 필수 ∧ citationReady 아님), 그 외 `review_required`. **`not_required` 가드 + cited/unresolved 주장 0건이면 무결성·부록 섹션은 조용히 생략**(일반 ai_only/저위험; blocked 가드는 클레임 0건이어도 표시). **본문 `[C#]` 인라인 라벨 점검(없음/누락/미지정)은 자문 전용 — `integrityStatus`/`reviewRequired`/`exportReady`/`citationReady` 를 절대 강등하지 않으며 사실/법적 인증이 아니다.** 검증된 인용 claim 행은 근거를 `[E#] filename#chunkIndex` 로 표기해 **근거 부록 라벨과 직접 연결**. Markdown export 는 문제와 자문을 분리 표시하며("문제"/"자문"), 근거 커버리지 UI 도 동일.
 - `evidencePreview` 는 **세션 단위 내부문서 evidence 검색 preview (Step 7)** 입니다.
   - `evidenceMode: "ai_only"` → `retrievalStatus: "not_requested"`, 후보 없음 (기본 동작 동일).
   - `internal_docs` (및 `internal_docs_web`) → orchestrator 가 세션 시작 시 **bounded preflight** 로 내부 evidence bundle 을 1회 조회. 결과: `ok` / `no_matches`, DB 미가용·timeout 시 `unavailable`, 기타 오류 시 `failed`. **어떤 경우에도 council 세션은 계속 진행됩니다.**
@@ -209,7 +210,7 @@ POST /api/council-sessions/:id/start
 GET /api/council-sessions/:id/export?format=markdown
 ```
 
-완료된 세션을 **안전한 Markdown 문서**로 내보냅니다. 결정적(deterministic) 출력이며, 다음을 포함합니다: 세션 헤더(id/taskType/evidenceMode/status), 사용자 질문, 최종 결론, 업체 발송용 답변, 내부 메모, 근거 있는 주장/추정/누락 근거, 위험 표현/권장 안전 표현, **근거 커버리지**(`evidenceCoverageStatus` + `evidenceUsed` 참조 + 근거 연결/부족 주장), provider 요약.
+완료된 세션을 **안전한 Markdown 문서**로 내보냅니다. 결정적(deterministic) 출력이며, 다음을 포함합니다: 세션 헤더(id/taskType/evidenceMode/status), 사용자 질문, 최종 결론, 업체 발송용 답변, 내부 메모, 근거 있는 주장/추정/누락 근거, 위험 표현/권장 안전 표현, **근거 커버리지**(`evidenceCoverageStatus` + `evidenceUsed` 참조 + 근거 연결/부족 주장)와 **근거 가드**(Retrieval Guard), **검증된 인용**(Verified Citations — `[C#]` 주장 ↔ `[E#]` 근거 연결), **인용 무결성 점검**(Citation Integrity — 문제/자문 분리), **근거 부록**(Evidence Appendix — deduped `[E#]` filename#chunkIndex·신뢰수준·검증상태), provider 요약. 인용 무결성·근거 부록은 `not_required` 가드 + 인용 주장 0건이면 생략(blocked 가드는 표시). chunkId/raw chunk 본문은 절대 미포함.
 
 - `format` 기본값 `markdown` (`md` 도 허용). 그 외 → `400 invalid_format`.
 - 세션 없음 → `404 not_found`.
