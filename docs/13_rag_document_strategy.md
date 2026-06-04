@@ -23,10 +23,12 @@
 >
 > - **의미 기반(하이브리드) 검색** (`lib/documents/embeddings.ts` + `lib/documents/vectorSearch.ts` + `POST /api/documents/embeddings/backfill`): 청크를 임베딩(`OpenAI text-embedding-3-small`; `USE_MOCK_PROVIDERS=true`/키 없음 → 결정적 MockEmbedder)해 `DocumentChunk.embedding`(LE Float32, **마이그레이션 없음**)에 저장하고, **앱레벨 코사인**으로 벡터/하이브리드 검색을 수행한다. evidence 경로는 `EVIDENCE_RETRIEVAL_MODE`(keyword/vector/**hybrid** 기본)로 선택. 임베딩 없으면 hybrid/vector 는 키워드로 자연 degrade. 인텍이크 시 best-effort 임베딩(실패해도 문서 생성 계속), 기존 청크는 backfill 라우트로. `GET /api/documents/search`(키워드)는 불변.
 >
+> - **Retrieval Guard (인용 충분성 게이트)** (`lib/council/retrievalGuard.ts` + orchestrator + schemas `retrievalGuard` + sessionMarkdown + FinalEvidenceCoveragePanel): `applyEvidenceUsage` 직후 결정적으로 실행되어 최종 답변에 `retrievalGuard`(guardStatus `not_required|passed|warning|blocked`, reasons, requiredEvidence, **businessCitationReady**, recommendedAction)를 부착한다. 답변을 재작성하지 않고 분류만 한다. 정책(보수적): `ai_only`→not_required(필요 작업/고위험이면 warning), 고위험·`document_based_answer`·`certification_checklist`는 근거 필수 — 근거 없음/불가면 **blocked**, 부분이면 **warning**. `businessCitationReady=true` 는 `sufficient`(검증된 매핑·uncovered 0) + 업체-인용 가능 신뢰수준(uploaded/official)일 때만. `unverified_web` 단독은 절대 발송 가능 아님. 모든 답변 형식(standard/ideation/checklist) 하위호환(optional, 기존 저장 답변은 기본값으로 파싱).
+>
 > 미구현 (범위 밖):
 > - **pgvector 인덱스**: 현재는 bounded 스캔 + 인프로세스 코사인. 대규모 코퍼스 확장 시 pgvector 로.
-> - **검증된 citation 생성 / citation 렌더링 UI**: 스니펫은 후보일 뿐 확정 인용이 아니며, 출력 JSON 스키마는 변경되지 않음.
-> - **답변 본문의 evidence 근거 강제(grounding) / 자동 사실검증 / Retrieval Guard 게이팅**: 컨텍스트는 제공되지만 모델이 이를 반드시 인용하도록 강제하거나 사후 검증하지는 않음(다음 슬라이스).
+> - **검증된 citation 강제는 가드/상태 검증 수준**: Retrieval Guard 는 인용 충분성·유효성에 대한 결정적 게이트이며 사실의 **법적 인증이 아니다**. 모델이 답변 본문에서 특정 chunk 를 반드시 인용하도록 강제하는 grounding/자동 사실검증, citation 렌더링 UI 는 미구현.
+> - **사용자 인증/RBAC**: write 엔드포인트는 선택적 공유 토큰(`API_WRITE_TOKEN`)만 — 전체 RBAC 는 향후 작업.
 
 ## Phase 2 목표
 
