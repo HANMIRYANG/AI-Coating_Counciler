@@ -13,8 +13,10 @@
 //   ProviderCallRecord       ↔  ProviderCallLog
 //   ProviderAttemptRecord    ↔  ProviderAttemptLog
 //
-// The Document / DocumentChunk models remain Phase 2 placeholders. No
-// upload / OCR / embedding / RAG behavior is implemented.
+// The Document / DocumentChunk models back the Phase 2 document layer.
+// Upload (inline text + Blob originals), PDF/DOCX parsing, and OCR fallback
+// are implemented; embedding / vector (semantic) RAG is not (the `embedding`
+// column is unused — keyword search only).
 //
 // `ProviderAttemptLog` mirrors the per-try forensic log — it is admin /
 // debug payload and must NEVER be exposed in the public recent-session
@@ -287,8 +289,9 @@ model ProviderAttemptLog {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 2 placeholders for RAG over internal technical documents.
-// NOT enabled. No upload / OCR / embedding / RAG behavior is implemented.
+// Phase 2 document layer for RAG over internal technical documents.
+// Implemented: text/Blob upload, PDF/DOCX parsing, OCR fallback, deterministic
+// chunking, keyword search. NOT yet: embedding / vector (semantic) retrieval.
 // ─────────────────────────────────────────────────────────────────────
 
 model Document {

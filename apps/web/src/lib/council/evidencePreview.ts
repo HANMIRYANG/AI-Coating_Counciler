@@ -6,10 +6,16 @@
 // evidence once, up front, and stashes this lightweight preview on the
 // session record so the snapshot endpoint can surface retrieval status.
 //
-// What this is NOT (still unimplemented):
-//   - Evidence candidates are NOT injected into provider prompts.
-//   - No embeddings / vector search / external web fetching / PDF-DOCX parse.
-//   - No final RAG reasoning over the evidence.
+// Scope of THIS module: it computes a bounded, deterministic preview only.
+// Downstream the council DOES consume it — Step 8 injects these candidates as
+// read-only context into the Round 1/2/3 prompts (see orchestrator.ts +
+// prompts.ts `formatEvidenceContextBlock`), and `internal_docs_web` also
+// fetches user-provided official-source URLs server-side (sourceFetch.ts).
+// PDF/DOCX parsing + OCR (extract.ts) feed extracted chunks into the same
+// keyword search this preview is built on.
+//
+// Still unimplemented: embeddings / vector (semantic) search, and verified-
+// citation grounding / auto fact-check over the evidence.
 //
 // This module is pure (types + deterministic mappers + a bounded timeout
 // knob). It imports ONLY types from the documents layer, so pulling it into

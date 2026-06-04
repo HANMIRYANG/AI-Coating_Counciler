@@ -100,14 +100,17 @@ Vercel Project → Settings → Environment Variables 에 설정합니다.
   - 라우트: `POST /api/documents/blob/upload` (`@vercel/blob/client` 의 `handleUpload`). 파일
     본문은 라우트를 경유하지 않고 브라우저 → Blob 으로 직접 업로드됩니다.
   - 토큰 발급 전에 filename / content type / size(기본 상한 25MB)를 검증합니다.
-  - 업로드 완료 시 원본 메타데이터를 `Document`(`status: "original_uploaded"`, **chunk 없음**)에
-    영속화하고, blob URL 은 내부값으로만 보관합니다(목록/검색/evidence 비노출).
+  - 업로드 완료 시 원본 메타데이터를 `Document`(추출 가능한 타입은 `status: "needs_extraction"`,
+    그 외 `original_uploaded`, **chunk 없음**)에 영속화하고, blob URL 은 내부값으로만
+    보관합니다(목록/검색/evidence 비노출).
 - **Blob 스토어는 PRIVATE 접근**으로 생성하는 것을 권장합니다(시험성적서 등 기밀 가능). 코드는
   blob URL 을 공개 응답에 노출하지 않습니다.
 - 설정: Vercel 대시보드에서 Blob 스토어 생성 후 `BLOB_READ_WRITE_TOKEN` 을 환경변수로
   추가합니다. 미설정 시 업로드 라우트는 `503` 을 반환합니다.
-- **미구현**: 원본에 대한 파싱/OCR/추출, 바이너리 chunking/임베딩/검색, 공개 다운로드 UI.
-  Blob 은 현재 **원본 보관 전용**입니다.
+- **지연 추출**: 저장된 원본은 `POST /api/documents/:id/extract` 로 필요 시 서버에서 가져와
+  text-layer/OCR 추출 후 chunk 를 부착하고 `chunked` 로 승격합니다(OCR 은 `DOCUMENT_OCR_PROVIDER`
+  설정 시; 미설정이면 503 `ocr_unavailable`).
+- **미구현**: 임베딩/벡터(의미 기반) 검색, 공개 다운로드 UI.
 
 ---
 
@@ -132,9 +135,8 @@ Vercel Project → Settings → Environment Variables 에 설정합니다.
 
 ## 6. 범위 밖 (이번 단계 미구현)
 
-- PDF/DOCX 파싱
-- Blob 업로드 UI / 공개 다운로드 UI
-- 임베딩 / 벡터 검색
-- 외부 웹 조회
+- 공개 다운로드 UI (Blob 원본)
+- 임베딩 / 벡터(의미 기반) 검색
+- 기관 카탈로그 기반 자동 출처 조회 (사용자 제공 URL 조회는 internal_docs_web 로 구현됨)
 - 큐(provider) 통합
 - 검증된 citation 강제

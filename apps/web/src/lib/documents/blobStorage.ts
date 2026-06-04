@@ -1,9 +1,11 @@
-// Vercel Blob original-file storage foundation (Step 14).
+// Vercel Blob original-file storage helpers (Step 14).
 //
 // Pure helpers + types for storing LARGE BINARY ORIGINALS (PDF / DOCX / etc.)
-// in Vercel Blob via the client-upload flow. This is storage-only:
+// in Vercel Blob via the client-upload flow. Scope of THIS module:
 //   - It does NOT change the inline text/markdown intake (POST /api/documents).
-//   - It does NOT parse / OCR / chunk / embed the binary originals.
+//   - It does NOT itself parse / OCR / chunk / embed. (A stored original is
+//     registered as `needs_extraction` and later parsed/OCR'd into chunks
+//     on demand by POST /api/documents/:id/extract — not here.)
 //   - Blob URLs are treated as INTERNAL — never surfaced in list / search /
 //     evidence responses.
 //

@@ -365,9 +365,12 @@ describe("GET /api/evidence-sources (read-only catalog endpoint)", () => {
       body.retrievalPolicy.maxSourcesPerSession,
     );
 
-    // Retrieval feature is not enabled yet.
+    // The catalog-driven AUTOMATIC official-source lookup is not enabled yet —
+    // but the message must scope that to catalog auto-lookup and point to the
+    // evidenceMode paths that DO exist (keyword RAG / user-provided URL fetch).
     expect(body.retrievalEnabled).toBe(false);
-    expect(body.message).toMatch(/구현되지 않/);
+    expect(body.message).toMatch(/자동 출처 조회.*구현되지 않/);
+    expect(body.message).toMatch(/evidenceMode/);
   });
 });
 

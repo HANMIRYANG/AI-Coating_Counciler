@@ -14,10 +14,14 @@
 //   - Defines a SourceRetrievalPolicy with bounded, nonzero defaults so a
 //     future retrieval step cannot freeze a council session.
 //
-// NON-goals for this slice:
-//   - No web crawling, no HTTP fetcher, no scraper.
-//   - No RAG, no document upload, no embeddings.
-//   - No internal_docs / internal_docs_web wiring on the orchestrator.
+// Boundaries of THIS module (the catalog/policy primitives only — the
+// capabilities below exist elsewhere in the codebase, just not here):
+//   - No web crawling / HTTP fetch here. User-provided official-source URL
+//     fetch lives in `sourceFetch.ts` (internal_docs_web).
+//   - No document upload / keyword search / embeddings here. Upload + keyword
+//     RAG live in `lib/documents/*`; embeddings remain unimplemented.
+//   - No orchestrator wiring here. internal_docs / internal_docs_web are wired
+//     via `evidencePreview.ts` + the orchestrator preflight, not this module.
 //   - This module MUST NOT import the orchestrator, rate limiter,
 //     provider adapters, or model policy.
 

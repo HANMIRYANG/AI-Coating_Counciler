@@ -6,9 +6,11 @@ import { HomeWorkspace } from "@/components/design/CouncilDesign";
 import type { EvidenceMode, TaskType } from "@/lib/council/types";
 
 const DEFAULT_TASK_TYPE: TaskType = "technical_review";
-// internal_docs is now user-selectable (keyword RAG over uploaded internal
-// docs). internal_docs_web (external official-source lookup) is not wired yet
-// and is offered as a disabled "준비 중" option in the selector.
+// All three evidence modes are user-selectable: ai_only, internal_docs
+// (keyword RAG over uploaded internal docs), and internal_docs_web (internal
+// docs + server-side fetch of user-provided official-source URLs). The default
+// stays ai_only so document-free reviews are unchanged. Note: catalog-based
+// AUTOMATIC official-source lookup is still not implemented.
 const DEFAULT_EVIDENCE_MODE: EvidenceMode = "ai_only";
 
 export default function HomePage() {
