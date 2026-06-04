@@ -17,7 +17,7 @@
 | `GET`  | `/api/council-sessions?limit=N` | `app/api/council-sessions/route.ts` | 최근 세션 summary 목록 (newest first) |
 | `GET`  | `/api/council-sessions/:id` | `app/api/council-sessions/[id]/route.ts` | 세션 스냅샷 (의견·비판·**최종 답변** + **evidence preview** 포함). `?debug=1` 옵션. |
 | `POST` | `/api/council-sessions/:id/start` | `app/api/council-sessions/[id]/start/route.ts` | idempotent 명시적 시작 (이미 시작했으면 no-op) |
-| `GET`  | `/api/council-sessions/:id/export?format=markdown` | `app/api/council-sessions/[id]/export/route.ts` | 완료 세션의 안전한 Markdown 내보내기 (최종 답변·내부 메모·근거 커버리지 포함). PDF/DOCX 미구현. |
+| `GET`  | `/api/council-sessions/:id/export?format=markdown` | `app/api/council-sessions/[id]/export/route.ts` | 완료 세션의 안전한 Markdown 내보내기 (최종 답변·내부 메모·근거 커버리지·근거 가드·**검증된 인용** 포함). PDF/DOCX 미구현. |
 | `GET`  | `/api/evidence-sources` | `app/api/evidence-sources/route.ts` | 카탈로그/정책 메타데이터. `retrievalEnabled=false` 는 **카탈로그 기반 자동 출처 조회**만 가리킴 — 사용자 제공 URL fetch 는 `internal_docs_web` 세션에서 동작. |
 | `POST` | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** text/plain·text/markdown 만 수용, 결정적 chunking 후 Prisma 영속화. PDF/DOCX/이미지 → 415. |
 | `GET`  | `/api/documents` | `app/api/documents/route.ts` | **Phase 2 foundation 한정.** 문서 summary 목록 (chunk 본문 미포함). |
@@ -171,7 +171,8 @@ Response `200` (요약):
   - `coveredClaims`: `{ claim, evidenceChunkIds[] }[]`.
   - `uncoveredClaims`: `string[]`.
   - `evidenceCoverageStatus`: `not_requested | no_evidence | partial | sufficient | unavailable`. ai_only → `not_requested`. internal_docs + ok preview 인데 모델 매핑이 없으면 보수적으로 `partial`. `sufficient` 는 모델이 명시적으로 산출한 경우에만 사용(자동 설정 안 함).
-  - `retrievalGuard` (optional, 하위호환): **Retrieval Guard** 결과. `applyEvidenceUsage` 직후 결정적으로 산출되어 부착됨. `{ guardStatus: "not_required"|"passed"|"warning"|"blocked", reasons[], requiredEvidence, businessCitationReady, recommendedAction }`. 답변을 재작성하지 않고 인용 충분성·유효성만 분류한다(법적 인증 아님). `businessCitationReady=true` 는 `sufficient`+검증된 매핑+업체-인용 가능 신뢰수준일 때만. citation 렌더링 UI / grounding 강제는 미구현.
+  - `retrievalGuard` (optional, 하위호환): **Retrieval Guard** 결과. `applyEvidenceUsage` 직후 결정적으로 산출되어 부착됨. `{ guardStatus: "not_required"|"passed"|"warning"|"blocked", reasons[], requiredEvidence, businessCitationReady, recommendedAction }`. 답변을 재작성하지 않고 인용 충분성·유효성만 분류한다(법적 인증 아님). `businessCitationReady=true` 는 `sufficient`+검증된 매핑+업체-인용 가능 신뢰수준일 때만.
+  - **검증된 인용(Verified Citations) — 렌더링 레이어** (`lib/council/verifiedCitations.ts`): 위 필드들에서 결정적으로 파생되는 표시/내보내기 전용 뷰(별도 API 필드 아님). covered claim 에 `[C1]` 라벨 + 인용 근거(`filename#chunkIndex`·신뢰수준·검증상태) 연결, uncovered 는 미연결로 분리, `citationReady`는 ① 가드가 발송 가능(businessCitationReady)하고 ② 모든 cited claim 이 ≥1 근거로 해석되며 ③ 미연결(uncovered) 주장이 0건일 때만 true. Markdown export 의 "검증된 인용" 섹션과 근거 커버리지 UI 에 노출. **모델 호출 없음·결정적이며, 법적/사실 인증이나 자동 사실검증이 아니다.** raw chunk 본문/내부 chunkId 비노출.
 - `evidencePreview` 는 **세션 단위 내부문서 evidence 검색 preview (Step 7)** 입니다.
   - `evidenceMode: "ai_only"` → `retrievalStatus: "not_requested"`, 후보 없음 (기본 동작 동일).
   - `internal_docs` (및 `internal_docs_web`) → orchestrator 가 세션 시작 시 **bounded preflight** 로 내부 evidence bundle 을 1회 조회. 결과: `ok` / `no_matches`, DB 미가용·timeout 시 `unavailable`, 기타 오류 시 `failed`. **어떤 경우에도 council 세션은 계속 진행됩니다.**

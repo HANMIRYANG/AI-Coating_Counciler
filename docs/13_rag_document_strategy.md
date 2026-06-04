@@ -25,9 +25,11 @@
 >
 > - **Retrieval Guard (인용 충분성 게이트)** (`lib/council/retrievalGuard.ts` + orchestrator + schemas `retrievalGuard` + sessionMarkdown + FinalEvidenceCoveragePanel): `applyEvidenceUsage` 직후 결정적으로 실행되어 최종 답변에 `retrievalGuard`(guardStatus `not_required|passed|warning|blocked`, reasons, requiredEvidence, **businessCitationReady**, recommendedAction)를 부착한다. 답변을 재작성하지 않고 분류만 한다. 정책(보수적): `ai_only`→not_required(필요 작업/고위험이면 warning), 고위험·`document_based_answer`·`certification_checklist`는 근거 필수 — 근거 없음/불가면 **blocked**, 부분이면 **warning**. `businessCitationReady=true` 는 `sufficient`(검증된 매핑·uncovered 0) + 업체-인용 가능 신뢰수준(uploaded/official)일 때만. `unverified_web` 단독은 절대 발송 가능 아님. 모든 답변 형식(standard/ideation/checklist) 하위호환(optional, 기존 저장 답변은 기본값으로 파싱).
 >
+> - **검증된 인용 렌더링 (Verified Citations)** (`lib/council/verifiedCitations.ts` + sessionMarkdown "검증된 인용" 섹션 + FinalEvidenceCoveragePanel/view-model): **이미 검증된** evidence usage 계약(`evidenceUsed`/`coveredClaims`/`uncoveredClaims`/`retrievalGuard`)을 결정적으로 재표현한다. covered claim 에 `[C1]`/`[C2]` 라벨, 인용 근거에 `[E1]`/`[E2]` 라벨(filename#chunkIndex · 신뢰수준 · 검증상태)을 부여하고, uncovered 는 미연결로 분리한다. `citationReady`는 ① `retrievalGuard.businessCitationReady=true` 이고 ② 모든 cited claim 이 ≥1 evidenceUsed ref 로 해석되며 ③ 미연결(uncovered) 주장이 0건일 때만 true. **모델 호출 없음**, raw chunk 본문/내부 chunkId 비노출, 결정적 dedupe·정렬. 표시/내보내기 전용.
+>
 > 미구현 (범위 밖):
 > - **pgvector 인덱스**: 현재는 bounded 스캔 + 인프로세스 코사인. 대규모 코퍼스 확장 시 pgvector 로.
-> - **검증된 citation 강제는 가드/상태 검증 수준**: Retrieval Guard 는 인용 충분성·유효성에 대한 결정적 게이트이며 사실의 **법적 인증이 아니다**. 모델이 답변 본문에서 특정 chunk 를 반드시 인용하도록 강제하는 grounding/자동 사실검증, citation 렌더링 UI 는 미구현.
+> - **법적/사실 인증이 아님**: Retrieval Guard 와 검증된 인용 렌더링은 **이미 검증된 매핑의 결정적 표현**일 뿐이며, 사실의 법적 인증이나 자동 사실검증이 아니다. 모델이 답변 본문에서 특정 chunk 를 반드시 인용하도록 강제하는 grounding 은 여전히 미구현.
 > - **사용자 인증/RBAC**: write 엔드포인트는 선택적 공유 토큰(`API_WRITE_TOKEN`)만 — 전체 RBAC 는 향후 작업.
 
 ## Phase 2 목표
