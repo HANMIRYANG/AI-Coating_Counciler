@@ -1,15 +1,20 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
 import {
   EvidenceBundleService,
   INTERNAL_DOCUMENT_TRUST_LEVEL,
   INTERNAL_DOCUMENT_VERIFICATION_STATUS,
-  RETRIEVAL_MODE,
   toEvidenceCandidate,
   toEvidenceCandidates,
 } from "../evidence-bundle";
 import type { DocumentSearchResult } from "../search";
 import type { DocumentService } from "../service";
+
+const ORIG_MODE = process.env.EVIDENCE_RETRIEVAL_MODE;
+afterEach(() => {
+  if (ORIG_MODE === undefined) delete process.env.EVIDENCE_RETRIEVAL_MODE;
+  else process.env.EVIDENCE_RETRIEVAL_MODE = ORIG_MODE;
+});
 
 function result(over: Partial<DocumentSearchResult> = {}): DocumentSearchResult {
   return {
@@ -24,10 +29,14 @@ function result(over: Partial<DocumentSearchResult> = {}): DocumentSearchResult 
   };
 }
 
-// A DocumentService stub that only implements .search — enough for the
-// bundle service, which never touches the rest. No database involved.
-function stubDocuments(search: DocumentService["search"]): DocumentService {
-  return { search } as unknown as DocumentService;
+// A DocumentService stub exposing only the retrieval methods the bundle uses
+// for the mode under test. No database involved.
+function stubDocuments(
+  methods: Partial<
+    Pick<DocumentService, "search" | "vectorSearch" | "hybridSearch">
+  >,
+): DocumentService {
+  return methods as unknown as DocumentService;
 }
 
 describe("toEvidenceCandidate", () => {
@@ -82,11 +91,39 @@ describe("toEvidenceCandidates", () => {
 });
 
 describe("EvidenceBundleService.build", () => {
-  it("forwards query + filters to DocumentService.search as { q, ... }", async () => {
-    const searchMock = vi.fn().mockResolvedValue([]);
-    const service = new EvidenceBundleService(stubDocuments(searchMock));
+  it("defaults to hybrid retrieval and reports internal_documents_hybrid", async () => {
+    delete process.env.EVIDENCE_RETRIEVAL_MODE;
+    const hybridMock = vi
+      .fn()
+      .mockResolvedValue([result({ chunkId: "x" }), result({ chunkId: "y" })]);
+    const service = new EvidenceBundleService(
+      stubDocuments({ hybridSearch: hybridMock }),
+    );
 
-    await service.build({
+    const bundle = await service.build({ query: "  Fire   COATING " });
+
+    expect(hybridMock).toHaveBeenCalledWith({
+      q: "  Fire   COATING ",
+      documentType: undefined,
+      productName: undefined,
+      issuer: undefined,
+      limit: undefined,
+    });
+    expect(bundle.normalizedQuery).toBe("fire coating");
+    expect(bundle.retrievalMode).toBe("internal_documents_hybrid");
+    expect(bundle.retrievalStatus).toBe("ok");
+    expect(bundle.count).toBe(2);
+    expect(bundle.candidates[0].sourceType).toBe("internal_document");
+  });
+
+  it("forwards query + filters as { q, ... } (keyword mode)", async () => {
+    process.env.EVIDENCE_RETRIEVAL_MODE = "keyword";
+    const searchMock = vi.fn().mockResolvedValue([]);
+    const service = new EvidenceBundleService(
+      stubDocuments({ search: searchMock }),
+    );
+
+    const bundle = await service.build({
       query: "fire coating",
       documentType: "test_report",
       productName: "HE-850A",
@@ -101,27 +138,24 @@ describe("EvidenceBundleService.build", () => {
       issuer: "KCL",
       limit: 5,
     });
+    expect(bundle.retrievalMode).toBe("internal_documents_keyword");
   });
 
-  it("returns a bounded bundle with normalized query + retrieval metadata", async () => {
-    const searchMock = vi
-      .fn()
-      .mockResolvedValue([result({ chunkId: "x" }), result({ chunkId: "y" })]);
-    const service = new EvidenceBundleService(stubDocuments(searchMock));
-
-    const bundle = await service.build({ query: "  Fire   COATING " });
-
-    expect(bundle.normalizedQuery).toBe("fire coating");
-    expect(bundle.retrievalMode).toBe(RETRIEVAL_MODE);
-    expect(bundle.retrievalStatus).toBe("ok");
-    expect(bundle.count).toBe(2);
-    expect(bundle.candidates).toHaveLength(2);
-    expect(bundle.candidates[0].sourceType).toBe("internal_document");
-  });
-
-  it("reports retrievalStatus no_matches when search returns nothing", async () => {
+  it("uses vector retrieval when EVIDENCE_RETRIEVAL_MODE=vector", async () => {
+    process.env.EVIDENCE_RETRIEVAL_MODE = "vector";
+    const vectorMock = vi.fn().mockResolvedValue([result({ chunkId: "v" })]);
     const service = new EvidenceBundleService(
-      stubDocuments(vi.fn().mockResolvedValue([])),
+      stubDocuments({ vectorSearch: vectorMock }),
+    );
+    const bundle = await service.build({ query: "fire" });
+    expect(vectorMock).toHaveBeenCalledTimes(1);
+    expect(bundle.retrievalMode).toBe("internal_documents_vector");
+  });
+
+  it("reports retrievalStatus no_matches when retrieval returns nothing", async () => {
+    delete process.env.EVIDENCE_RETRIEVAL_MODE;
+    const service = new EvidenceBundleService(
+      stubDocuments({ hybridSearch: vi.fn().mockResolvedValue([]) }),
     );
     const bundle = await service.build({ query: "nothing" });
     expect(bundle.retrievalStatus).toBe("no_matches");
@@ -130,8 +164,9 @@ describe("EvidenceBundleService.build", () => {
   });
 
   it("propagates DocumentService errors (no swallowing)", async () => {
+    delete process.env.EVIDENCE_RETRIEVAL_MODE;
     const service = new EvidenceBundleService(
-      stubDocuments(vi.fn().mockRejectedValue(new Error("boom"))),
+      stubDocuments({ hybridSearch: vi.fn().mockRejectedValue(new Error("boom")) }),
     );
     await expect(service.build({ query: "fire" })).rejects.toThrow("boom");
   });

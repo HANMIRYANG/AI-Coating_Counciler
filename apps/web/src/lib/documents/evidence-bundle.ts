@@ -1,17 +1,18 @@
-// Internal evidence bundle foundation.
+// Internal evidence bundle.
 //
-// Normalizes Step 5 keyword document-search results into bounded
-// evidence/citation candidates that a future council orchestrator can
-// consume. This is NOT wired into the orchestrator, and it is NOT full RAG:
-//   - No embeddings, no vector similarity, no semantic retrieval.
-//   - No external web fetching.
-//   - No evidence-bundle → orchestrator handoff.
+// Normalizes internal document-retrieval results into bounded evidence/citation
+// candidates for the council orchestrator (wired in via the session preflight,
+// Step 7/8). The retrieval path is selectable by EVIDENCE_RETRIEVAL_MODE:
+//   - keyword — deterministic substring matching (search.ts).
+//   - vector  — embedding cosine similarity (embeddings.ts + vectorSearch.ts).
+//   - hybrid  — keyword + vector merged (default).
+// Still NOT done: a pgvector index (app-level cosine), verified-citation
+// grounding. No external web fetch happens here (that is internal_docs_web /
+// sourceFetch.ts).
 //
-// It is a deterministic, bounded transform over the existing
-// `DocumentService.search` output. Trust/verification tokens are reused from
-// `lib/council/evidence.ts` so the eventual orchestrator wiring speaks the
-// same vocabulary. Candidates carry only a bounded snippet — never the full
-// chunk body.
+// Deterministic + bounded. Trust/verification tokens are reused from
+// `lib/council/evidence.ts`. Candidates carry only a bounded snippet — never
+// the full chunk body.
 
 import { z } from "zod";
 
@@ -34,10 +35,28 @@ export const INTERNAL_DOCUMENT_TRUST_LEVEL: EvidenceTrustLevel =
 export const INTERNAL_DOCUMENT_VERIFICATION_STATUS: EvidenceVerificationStatus =
   "auto_extracted";
 
-// Names the retrieval path that produced the bundle. Distinguishes this
-// keyword foundation from the future vector / hybrid retrievers.
-export const RETRIEVAL_MODE = "internal_documents_keyword" as const;
-export type RetrievalMode = typeof RETRIEVAL_MODE;
+// Names the retrieval path that produced the bundle.
+export const RETRIEVAL_MODES = [
+  "internal_documents_keyword",
+  "internal_documents_vector",
+  "internal_documents_hybrid",
+] as const;
+export type RetrievalMode = (typeof RETRIEVAL_MODES)[number];
+// Back-compat constant (the original keyword path); still referenced by tests
+// and as a safe default name.
+export const RETRIEVAL_MODE: RetrievalMode = "internal_documents_keyword";
+
+// Operator-selected retrieval mode. Default `hybrid` (keyword + vector). With
+// no embeddings present, hybrid/vector degrade to keyword, so the default is
+// safe even before any corpus is embedded.
+export function resolveRetrievalMode(): RetrievalMode {
+  const raw = (process.env.EVIDENCE_RETRIEVAL_MODE ?? "hybrid")
+    .trim()
+    .toLowerCase();
+  if (raw === "keyword") return "internal_documents_keyword";
+  if (raw === "vector") return "internal_documents_vector";
+  return "internal_documents_hybrid";
+}
 
 export type RetrievalStatus = "ok" | "no_matches";
 
@@ -112,18 +131,26 @@ export class EvidenceBundleService {
   ) {}
 
   async build(input: EvidenceBundleRequest): Promise<EvidenceBundle> {
-    const results = await this.documents.search({
+    const mode = resolveRetrievalMode();
+    const req = {
       q: input.query,
       documentType: input.documentType,
       productName: input.productName,
       issuer: input.issuer,
       limit: input.limit,
-    });
+    };
+
+    const results =
+      mode === "internal_documents_keyword"
+        ? await this.documents.search(req)
+        : mode === "internal_documents_vector"
+          ? await this.documents.vectorSearch(req)
+          : await this.documents.hybridSearch(req);
 
     const candidates = toEvidenceCandidates(results);
     return {
       normalizedQuery: normalizeQuery(input.query).join(" "),
-      retrievalMode: RETRIEVAL_MODE,
+      retrievalMode: mode,
       retrievalStatus: candidates.length > 0 ? "ok" : "no_matches",
       count: candidates.length,
       candidates,

@@ -1,9 +1,10 @@
-// Internal document search foundation — deterministic keyword matching.
+// Internal document search — the deterministic KEYWORD layer.
 //
-// This is NOT full RAG. There are no embeddings, no vector similarity, no
-// external fetching, and no orchestrator wiring. It is a pure, deterministic
-// keyword layer over the already-persisted `DocumentChunk.content` plus the
-// `Document.metadata` JSONB column.
+// This module is keyword-only by design: a pure, deterministic substring layer
+// over the persisted `DocumentChunk.content` plus the `Document.metadata` JSONB
+// column. Semantic (embedding/cosine) retrieval lives in `vectorSearch.ts` +
+// `embeddings.ts`; the two are combined in `DocumentService.hybridSearch`. The
+// metadata-filter helper here (`buildDocumentMetadataWhere`) is shared by both.
 //
 // This module holds ONLY pure helpers + the request schema so they can be
 // unit-tested without a database. The Prisma query lives in
@@ -182,6 +183,32 @@ export function rankCandidates(
   }));
 }
 
+// Exact metadata filter on the parent document's JSONB column. Shared by the
+// keyword (`buildChunkWhere`) and vector candidate scans. Pure — no DB access.
+export function buildDocumentMetadataWhere(filters: {
+  documentType?: string;
+  productName?: string;
+  issuer?: string;
+}): Prisma.DocumentWhereInput | undefined {
+  const conditions: Prisma.DocumentWhereInput[] = [];
+  if (filters.documentType) {
+    conditions.push({
+      metadata: { path: ["documentType"], equals: filters.documentType },
+    });
+  }
+  if (filters.productName) {
+    conditions.push({
+      metadata: { path: ["productName"], equals: filters.productName },
+    });
+  }
+  if (filters.issuer) {
+    conditions.push({
+      metadata: { path: ["issuer"], equals: filters.issuer },
+    });
+  }
+  return conditions.length > 0 ? { AND: conditions } : undefined;
+}
+
 // Construct the Prisma `where` for the candidate scan: chunks whose content
 // contains ANY term (case-insensitive), narrowed by exact metadata filters
 // on the parent document's JSONB column. Pure — no DB access.
@@ -199,25 +226,8 @@ export function buildChunkWhere(
     })),
   };
 
-  const metadataConditions: Prisma.DocumentWhereInput[] = [];
-  if (filters.documentType) {
-    metadataConditions.push({
-      metadata: { path: ["documentType"], equals: filters.documentType },
-    });
-  }
-  if (filters.productName) {
-    metadataConditions.push({
-      metadata: { path: ["productName"], equals: filters.productName },
-    });
-  }
-  if (filters.issuer) {
-    metadataConditions.push({
-      metadata: { path: ["issuer"], equals: filters.issuer },
-    });
-  }
-  if (metadataConditions.length > 0) {
-    where.document = { AND: metadataConditions };
-  }
+  const document = buildDocumentMetadataWhere(filters);
+  if (document) where.document = document;
 
   return where;
 }

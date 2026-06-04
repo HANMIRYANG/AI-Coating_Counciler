@@ -239,7 +239,9 @@ describeIf("DocumentService (integration, PRISMA_INTEGRATION=1)", () => {
       issuer: "KCL",
     });
 
-    expect(bundle.retrievalMode).toBe("internal_documents_keyword");
+    // Default EVIDENCE_RETRIEVAL_MODE is hybrid (keyword + vector). With the
+    // mock embedder active at intake, both paths contribute.
+    expect(bundle.retrievalMode).toBe("internal_documents_hybrid");
     expect(bundle.count).toBeGreaterThanOrEqual(1);
     const candidate = bundle.candidates.find((c) => c.documentId === doc.id);
     expect(candidate).toBeDefined();

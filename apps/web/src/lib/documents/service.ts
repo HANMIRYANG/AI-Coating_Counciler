@@ -1,13 +1,18 @@
 // Prisma-backed DocumentService.
 //
-// Foundation slice (Step 3 + Step 4 + Step 5):
-//   - Persists the `Document` row + `DocumentChunk` rows. `embedding`
-//     stays null. No orchestrator wiring.
+//   - Persists the `Document` row + `DocumentChunk` rows. Each chunk is
+//     embedded at intake on a BEST-EFFORT basis (embeddings.ts): on any
+//     embedder failure the embedding is left null and the document still
+//     persists — keyword search keeps working and the chunk becomes a backfill
+//     target (`backfillEmbeddings`).
 //   - The validated rich metadata block (issuer / testMethod / etc.) is
-//     persisted into `Document.metadata` (Step 4).
-//   - `search()` adds deterministic keyword retrieval over persisted chunk
-//     content + metadata filters (Step 5). Embeddings, vector similarity,
-//     evidence-bundle assembly, and orchestrator wiring remain unimplemented.
+//     persisted into `Document.metadata`.
+//   - Retrieval: `search()` (keyword), `vectorSearch()` (embedding cosine), and
+//     `hybridSearch()` (both, merged). Wired into the council via the evidence
+//     bundle preflight.
+//   - Blob originals: `recordOriginalUpload()` stores metadata as
+//     `needs_extraction`; text is extracted + chunked on demand via the lazy
+//     extract route.
 //
 // Error surface:
 //   `DocumentServiceError` with a typed `code`. The API route translates
@@ -25,6 +30,8 @@ import { isParseableMime } from "./extract";
 import { isOcrSupportedMime } from "./ocr";
 import {
   buildChunkWhere,
+  buildDocumentMetadataWhere,
+  buildSnippet,
   clampSearchLimit,
   normalizeQuery,
   rankCandidates,
@@ -33,6 +40,17 @@ import {
   type SearchCandidate,
   type SearchDocumentsRequest,
 } from "./search";
+import { buildEmbedder, type Embedder } from "./embeddings";
+import {
+  chunkEmbeddingModel,
+  decodeEmbedding,
+  embeddingStamp,
+  encodeEmbedding,
+  maxVectorCandidates,
+  mergeHybrid,
+  rankByCosine,
+  type VectorCandidate,
+} from "./vectorSearch";
 
 export type DocumentServiceErrorCode =
   | "database_unavailable"
@@ -88,6 +106,18 @@ function clampListLimit(value: number | undefined): number {
   return Math.min(n, LIST_MAX_LIMIT);
 }
 
+const BACKFILL_DEFAULT_LIMIT = 100;
+const BACKFILL_MAX_LIMIT = 500;
+
+function clampBackfillLimit(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return BACKFILL_DEFAULT_LIMIT;
+  }
+  const n = Math.floor(value);
+  if (n <= 0) return BACKFILL_DEFAULT_LIMIT;
+  return Math.min(n, BACKFILL_MAX_LIMIT);
+}
+
 export function canExtractOriginalMime(mimeType: string): boolean {
   return isParseableMime(mimeType) || isOcrSupportedMime(mimeType);
 }
@@ -123,7 +153,52 @@ function wrapDbError(err: unknown): never {
 }
 
 export class DocumentService {
-  constructor(private readonly prisma: PrismaClient = getPrismaClient()) {}
+  private _embedder?: Embedder;
+
+  constructor(
+    private readonly prisma: PrismaClient = getPrismaClient(),
+    embedder?: Embedder,
+  ) {
+    this._embedder = embedder;
+  }
+
+  // Lazily built so unrelated ops (list/search) never construct an embedder
+  // and a bad EMBEDDING_MODEL never breaks them. Injectable for tests.
+  private embedder(): Embedder {
+    return (this._embedder ??= buildEmbedder());
+  }
+
+  // Best-effort: embed chunk contents into per-chunk { embedding bytes, stamp }.
+  // On ANY embedder failure (missing key, provider error, timeout) returns all
+  // nulls so document creation NEVER blocks — keyword search still works and the
+  // chunks become backfill targets.
+  private async embedChunksSafe(
+    contents: string[],
+  ): Promise<Array<{ buf: Buffer; stamp: Record<string, unknown> } | null>> {
+    if (contents.length === 0) return [];
+    try {
+      const embedder = this.embedder();
+      const vectors = await embedder.embed(contents);
+      if (vectors.length !== contents.length) {
+        return contents.map(() => null);
+      }
+      const stamp = embeddingStamp(embedder);
+      return vectors.map((v) => ({ buf: encodeEmbedding(v), stamp }));
+    } catch {
+      return contents.map(() => null);
+    }
+  }
+
+  private chunkEmbeddingData(
+    embedded: { buf: Buffer; stamp: Record<string, unknown> } | null,
+  ): { embedding: Buffer | null; metadata: Prisma.InputJsonValue | typeof Prisma.DbNull } {
+    return {
+      embedding: embedded?.buf ?? null,
+      metadata: embedded
+        ? (embedded.stamp as Prisma.InputJsonValue)
+        : Prisma.DbNull,
+    };
+  }
 
   async create(
     input: CreateDocumentRequest,
@@ -139,6 +214,10 @@ export class DocumentService {
         "chunker produced 0 chunks from non-empty content",
       );
     }
+
+    // Best-effort embeddings (outside the DB transaction so a slow embed never
+    // holds a write lock). Failure → null embeddings, document still persists.
+    const embedded = await this.embedChunksSafe(chunks.map((c) => c.content));
 
     try {
       const created = await this.prisma.document.create({
@@ -158,12 +237,13 @@ export class DocumentService {
             ? (input.metadata as Prisma.InputJsonValue)
             : Prisma.DbNull,
           chunks: {
-            create: chunks.map((c) => ({
+            create: chunks.map((c, i) => ({
               chunkIndex: c.index,
               content: c.content,
               pageNumber: c.pageNumber ?? null,
-              // per-chunk metadata + embedding intentionally left null —
-              // populated when embeddings / retrieval ship.
+              // Per-chunk embedding bytes + an {embeddingModel, embeddingDims}
+              // stamp in chunk.metadata (null when embedding was unavailable).
+              ...this.chunkEmbeddingData(embedded[i]),
             })),
           },
         },
@@ -265,9 +345,11 @@ export class DocumentService {
   }
 
   // Persist a large binary ORIGINAL uploaded to Vercel Blob (Step 14).
-  // Creates a Document row holding only the blob metadata — NO chunks are
-  // created (binary parsing / extraction is not implemented). The blob URL
-  // is internal and is never surfaced by list / search / evidence.
+  // Creates a Document row holding only the blob metadata — NO chunks yet.
+  // Extractable types are registered as `needs_extraction`; text is extracted,
+  // chunked, and embedded later on demand via the lazy extract route
+  // (`POST /api/documents/:id/extract`). The blob URL is internal and is never
+  // surfaced by list / search / evidence.
   async recordOriginalUpload(input: {
     filename: string;
     contentType: string;
@@ -383,6 +465,9 @@ export class DocumentService {
       );
     }
 
+    // Best-effort embeddings before the transaction (see create()).
+    const embedded = await this.embedChunksSafe(chunks.map((c) => c.content));
+
     try {
       await this.prisma.$transaction(async (tx) => {
         await tx.documentChunk.deleteMany({
@@ -397,16 +482,151 @@ export class DocumentService {
               ? (input.metadata as Prisma.InputJsonValue)
               : Prisma.DbNull,
             chunks: {
-              create: chunks.map((c) => ({
+              create: chunks.map((c, i) => ({
                 chunkIndex: c.index,
                 content: c.content,
                 pageNumber: c.pageNumber ?? null,
+                ...this.chunkEmbeddingData(embedded[i]),
               })),
             },
           },
         });
       });
       return { id: input.id, chunkCount: chunks.length };
+    } catch (err) {
+      wrapDbError(err);
+    }
+  }
+
+  // Deterministic vector retrieval. Order matters for the degradation path:
+  // FIRST scan a bounded set of stored embeddings and keep only those produced
+  // by the CURRENT embedder; if no comparable candidate exists, return []
+  // WITHOUT embedding the query (so an unembedded/mismatched corpus degrades to
+  // keyword instantly, with no embeddings API call). Only then embed the query
+  // and cosine-rank in-process. Callers (hybridSearch / evidence bundle) treat
+  // [] as "fall back to keyword".
+  async vectorSearch(
+    input: SearchDocumentsRequest,
+  ): Promise<DocumentSearchResult[]> {
+    const q = input.q.trim();
+    if (q.length === 0) return [];
+
+    const embedder = this.embedder();
+    const limit = clampSearchLimit(input.limit);
+    const document = buildDocumentMetadataWhere({
+      documentType: input.documentType,
+      productName: input.productName,
+      issuer: input.issuer,
+    });
+
+    // Scan stored embeddings FIRST and keep only those produced by the current
+    // embedder. This runs BEFORE any query-embedding call so that an empty /
+    // unembedded / mismatched corpus degrades to keyword instantly — without
+    // spending an embeddings API call (and an EMBEDDING_TIMEOUT_MS wait) on the
+    // query just to discover there is nothing to compare against.
+    const candidates: VectorCandidate[] = [];
+    try {
+      const rows = await this.prisma.documentChunk.findMany({
+        where: { embedding: { not: null }, ...(document ? { document } : {}) },
+        take: maxVectorCandidates(),
+        orderBy: [{ documentId: "asc" }, { chunkIndex: "asc" }],
+        select: {
+          id: true,
+          chunkIndex: true,
+          content: true,
+          embedding: true,
+          metadata: true,
+          document: { select: { id: true, filename: true, metadata: true } },
+        },
+      });
+
+      for (const r of rows) {
+        if (!r.embedding) continue;
+        // Skip chunks embedded by a different model (dimension/space mismatch).
+        if (chunkEmbeddingModel(r.metadata) !== embedder.id) continue;
+        candidates.push({
+          chunkId: r.id,
+          chunkIndex: r.chunkIndex,
+          documentId: r.document.id,
+          filename: r.document.filename,
+          // No query term to center on — head snippet, bounded like keyword.
+          snippet: buildSnippet(r.content, []),
+          metadata: (r.document.metadata as DocumentMetadata | null) ?? null,
+          vector: decodeEmbedding(Buffer.from(r.embedding)),
+        });
+      }
+    } catch (err) {
+      wrapDbError(err);
+    }
+
+    // No comparable stored embedding → no point embedding the query.
+    if (candidates.length === 0) return [];
+
+    let queryVec: Float32Array | undefined;
+    try {
+      [queryVec] = await embedder.embed([q]);
+    } catch {
+      return [];
+    }
+    if (!queryVec) return [];
+
+    return rankByCosine(candidates, queryVec, limit);
+  }
+
+  // Hybrid retrieval: keyword + vector, merged into one deterministic ranking.
+  // With no embeddings present, vectorSearch returns [] so this collapses to
+  // pure keyword (zero behavior change until a corpus is embedded/backfilled).
+  async hybridSearch(
+    input: SearchDocumentsRequest,
+  ): Promise<DocumentSearchResult[]> {
+    const limit = clampSearchLimit(input.limit);
+    const [keyword, vector] = await Promise.all([
+      this.search(input),
+      this.vectorSearch(input),
+    ]);
+    return mergeHybrid(keyword, vector, limit);
+  }
+
+  // Embed chunks that have no stored vector yet (pre-feature chunks, or chunks
+  // whose best-effort embedding failed at intake). Bounded per call so it can
+  // be invoked repeatedly until `remaining` reaches 0. Model-change re-embed is
+  // out of scope here (clear embeddings to force a fresh backfill).
+  async backfillEmbeddings(
+    opts: { limit?: number } = {},
+  ): Promise<{ processed: number; skipped: number; remaining: number }> {
+    const take = clampBackfillLimit(opts.limit);
+    try {
+      const rows = await this.prisma.documentChunk.findMany({
+        where: { embedding: null },
+        take,
+        orderBy: [{ documentId: "asc" }, { chunkIndex: "asc" }],
+        select: { id: true, content: true },
+      });
+      if (rows.length === 0) return { processed: 0, skipped: 0, remaining: 0 };
+
+      const embedded = await this.embedChunksSafe(rows.map((r) => r.content));
+      let processed = 0;
+      let skipped = 0;
+      for (let i = 0; i < rows.length; i++) {
+        const e = embedded[i];
+        if (!e) {
+          skipped++;
+          continue;
+        }
+        await this.prisma.documentChunk.update({
+          where: { id: rows[i].id },
+          data: {
+            embedding: e.buf,
+            metadata: e.stamp as Prisma.InputJsonValue,
+          },
+        });
+        processed++;
+      }
+
+      const remaining = await this.prisma.documentChunk.count({
+        where: { embedding: null },
+      });
+      return { processed, skipped, remaining };
     } catch (err) {
       wrapDbError(err);
     }
