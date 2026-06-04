@@ -45,6 +45,7 @@ import type {
 } from "./types";
 import {
   CertificationChecklistFinalAnswerSchema,
+  FinalAnswerSchema,
   IdeationFinalAnswerSchema,
   type FinalAnswer,
   type ProviderCritique,
@@ -159,14 +160,20 @@ function attemptFromRow(r: ProviderAttemptLog): ProviderAttemptRecord {
 }
 
 function finalAnswerFromRow(r: FinalAnswerRow): SynthesisResult {
-  // Non-standard kinds persist their full payload in `payload` (with a
-  // back-compat fallback to the legacy `ideation` column for older rows).
-  // Re-validate through the schema so defaults / shape are guaranteed.
+  // All answer kinds persist their full payload in `payload` (the canonical
+  // source). Re-validate through the schema so defaults / shape are guaranteed.
+  // ideation keeps a back-compat fallback to the legacy `ideation` column.
   if (r.answerKind === "ideation") {
     return IdeationFinalAnswerSchema.parse(r.payload ?? r.ideation);
   }
   if (r.answerKind === "certification_checklist") {
     return CertificationChecklistFinalAnswerSchema.parse(r.payload);
+  }
+  // standard: prefer the canonical payload (carries fields without a dedicated
+  // column, e.g. retrievalGuard). Fall back to the denormalized columns for
+  // older rows written before `payload` was persisted for standard answers.
+  if (r.payload != null) {
+    return FinalAnswerSchema.parse(r.payload);
   }
   return {
     answerKind: "standard",
@@ -262,10 +269,12 @@ export class PrismaSessionStore implements SessionStore {
         patch.evidencePreview as unknown as Prisma.InputJsonValue;
 
     // FinalAnswer is stored in its own table — create a new revision row.
-    // Two output kinds share the table: "standard" uses the dedicated columns;
-    // "ideation" (docs/23) persists its full payload in `ideation` while the
-    // shared safety columns stay populated. Standard-only columns are narrowed
-    // via the `answerKind` discriminator so they read NULL for ideation rows.
+    // `payload` is the CANONICAL full final-answer payload for ALL answer kinds
+    // (standard / ideation / certification_checklist), so fields without a
+    // dedicated column (e.g. `retrievalGuard`) survive a DB round-trip. The
+    // dedicated standard/shared columns below are denormalized / back-compat
+    // fields kept for queryability and the old API shape; reconstruction
+    // prefers `payload` and falls back to columns for older rows.
     if (patch.finalAnswer) {
       const fa = patch.finalAnswer;
       await this.client.finalAnswer.create({
@@ -274,12 +283,8 @@ export class PrismaSessionStore implements SessionStore {
           revisionNumber: 1,
           status: patch.status ?? "completed",
           answerKind: fa.answerKind,
-          // Non-standard kinds (ideation / certification_checklist / …) persist
-          // their full payload generically; standard answers use the columns.
-          payload:
-            fa.answerKind === "standard"
-              ? Prisma.DbNull
-              : (fa as unknown as Prisma.InputJsonValue),
+          // Canonical full payload for every answer kind.
+          payload: fa as unknown as Prisma.InputJsonValue,
           // Legacy column — no longer written; kept for back-compat reads only.
           ideation: Prisma.DbNull,
           conclusion: fa.conclusion,

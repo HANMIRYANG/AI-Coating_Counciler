@@ -1,12 +1,13 @@
 "use client";
 
-// Final-answer evidence coverage block (Step 11) — display-only.
+// Final-answer evidence coverage block — display-only.
 //
-// Renders the Step 10 evidence usage contract (`evidenceCoverageStatus`,
-// `evidenceUsed`, `coveredClaims`, `uncoveredClaims`) inside the existing
-// final-answer card body. Thin renderer over the pure view-model in
-// `finalEvidenceCoverageView.ts`. No verified-citation enforcement, no
-// semantic RAG, no full chunk bodies, no internal ids shown.
+// Renders the evidence usage contract (`evidenceCoverageStatus`,
+// `evidenceUsed`, `coveredClaims`, `uncoveredClaims`) plus the Retrieval Guard
+// verdict (`retrievalGuard`) inside the existing final-answer card body. Thin
+// renderer over the pure view-model in `finalEvidenceCoverageView.ts`. The
+// guard is a status gate (citation sufficiency), NOT a legal certification; no
+// full chunk bodies, no internal ids shown.
 //
 // Returns a fragment (not a card) so it nests cleanly in the existing
 // "내부 메모 및 누락 근거" card without card-in-card layout.
@@ -23,6 +24,7 @@ export function FinalEvidenceCoveragePanel({
     | "evidenceUsed"
     | "coveredClaims"
     | "uncoveredClaims"
+    | "retrievalGuard"
   >;
 }) {
   const view = buildFinalEvidenceCoverageView(answer);
@@ -37,6 +39,24 @@ export function FinalEvidenceCoveragePanel({
           {view.statusLabel}
         </span>
       </b>
+
+      {view.guard && (
+        <p>
+          <b>
+            근거 가드{" "}
+            <span className={`badge evidence-coverage-${view.guard.tone}`}>
+              {view.guard.statusLabel}
+            </span>
+          </b>
+          <span className="muted">
+            {" "}
+            · 업체 발송 {view.guard.businessReady ? "가능" : "불가"}
+          </span>
+          {view.guard.recommendedAction && (
+            <span className="muted"> — {view.guard.recommendedAction}</span>
+          )}
+        </p>
+      )}
 
       {view.warning && <p className="muted">{view.warning}</p>}
 
@@ -80,7 +100,8 @@ export function FinalEvidenceCoveragePanel({
       )}
 
       <p className="muted">
-        ※ 표시용 근거 커버리지이며, 검증된 인용 강제는 적용되지 않습니다.
+        ※ 근거 가드는 인용 충분성·유효성에 대한 결정적 게이트이며, 사실의 법적
+        인증이 아닙니다. 발송 전 사람 검토를 권장합니다.
       </p>
     </div>
   );

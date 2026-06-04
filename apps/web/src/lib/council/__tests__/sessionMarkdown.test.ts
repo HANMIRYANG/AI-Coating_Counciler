@@ -136,6 +136,31 @@ describe("buildSessionMarkdown", () => {
   it("is byte-for-byte deterministic", () => {
     expect(buildSessionMarkdown(session())).toBe(buildSessionMarkdown(session()));
   });
+
+  it("renders the retrieval guard section when present", () => {
+    const withGuard = buildSessionMarkdown(
+      session({
+        finalAnswer: finalAnswer({
+          retrievalGuard: {
+            guardStatus: "blocked",
+            reasons: ["내부 문서 근거가 검색되지 않았습니다."],
+            requiredEvidence: true,
+            businessCitationReady: false,
+            recommendedAction: "업체 발송 금지. 근거 문서를 확보하세요.",
+          },
+        }),
+      }),
+    );
+    expect(withGuard).toContain("### 근거 가드 (Retrieval Guard)");
+    expect(withGuard).toContain("- 상태: blocked");
+    expect(withGuard).toContain("- 업체 발송 가능: 아니오");
+    expect(withGuard).toContain("- 권장 조치: 업체 발송 금지. 근거 문서를 확보하세요.");
+    expect(withGuard).toContain("  - 내부 문서 근거가 검색되지 않았습니다.");
+  });
+
+  it("omits the guard section when absent (backward compatible)", () => {
+    expect(buildSessionMarkdown(session())).not.toContain("근거 가드");
+  });
 });
 
 describe("sessionMarkdownFilename", () => {

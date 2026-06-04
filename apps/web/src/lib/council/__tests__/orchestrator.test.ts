@@ -114,6 +114,15 @@ describe("CouncilOrchestrator", () => {
     expect(final?.status).toBe("completed");
     expect(final?.finalAnswer).toBeTruthy();
     expect(final?.opinions.length).toBe(3);
+
+    // Retrieval Guard is attached to the final answer. ai_only is never
+    // business-citation-ready and is never "blocked" (the user opted out of
+    // evidence); it is not_required or, for an evidence-required task/risk,
+    // a warning.
+    const guard = final?.finalAnswer?.retrievalGuard;
+    expect(guard).toBeDefined();
+    expect(guard?.businessCitationReady).toBe(false);
+    expect(["not_required", "warning"]).toContain(guard?.guardStatus);
   });
 
   it("waits for required OpenAI opinion before quorum grace can advance", async () => {

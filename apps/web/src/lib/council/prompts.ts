@@ -266,8 +266,9 @@ function synthesisEvidenceMappingGuidance(ctx?: EvidenceContext): string {
 - 근거 후보가 [근거 E1], [근거 E2] 형식으로 제공된 경우, coveredClaims[].evidenceChunkIds에는 대괄호 없이 "E1", "E2" 같은 근거 ID만 넣으세요.
 - 제공된 문서 발췌가 직접 뒷받침하는 주장만 coveredClaims에 넣으세요.
 - 문서 발췌가 직접 뒷받침하지 않는 주장은 coveredClaims에 넣지 말고 uncoveredClaims 또는 missingEvidence에 넣으세요.
-- 없는 근거 ID를 만들지 마세요.
-- 모든 주요 근거 주장에 유효한 근거 ID가 연결된 경우에만 evidenceCoverageStatus를 "sufficient"로 두고, 그 외에는 "partial"로 두세요.`;
+- 없는 근거 ID를 만들지 마세요. uncovered(근거 미연결) 주장은 coveredClaims로 옮기지 말고 그대로 두세요.
+- 모든 주요 근거 주장에 유효한 근거 ID가 연결된 경우에만 evidenceCoverageStatus를 "sufficient"로 두고, 그 외에는 "partial"로 두세요.
+- 근거가 partial 이거나 부족하면 businessReadyAnswer 에 "추가 문서 확보 후 재검토 필요" 단서를 반드시 포함하세요.`;
 }
 
 export function buildInitialOpinionMessages(

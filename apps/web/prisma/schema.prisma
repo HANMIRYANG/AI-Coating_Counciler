@@ -167,12 +167,16 @@ model FinalAnswer {
   uncoveredClaims          Json?
   evidenceCoverageStatus   String?
 
-  // Synthesis output kind discriminator (docs/23). "standard" answers use the
-  // dedicated columns above. Non-standard kinds ("ideation",
-  // "certification_checklist", …) persist their FULL payload in the generic
-  // `payload` column while the shared safety columns above stay populated.
-  // `ideation` is the legacy column kept only for backward-compatible reads of
-  // rows written before `payload` existed.
+  // Synthesis output kind discriminator (docs/23): "standard" / "ideation" /
+  // "certification_checklist".
+  //
+  // `payload` is the CANONICAL full final-answer payload for ALL answer kinds,
+  // so fields without a dedicated column (e.g. `retrievalGuard`) survive a DB
+  // round-trip. Reconstruction parses `payload` first and falls back to the
+  // dedicated columns for older rows where it is null. The dedicated standard /
+  // shared safety columns above are denormalized / backward-compatible fields
+  // kept for queryability and the old API shape. `ideation` is the legacy
+  // column kept only for back-compat reads of rows written before `payload`.
   answerKind               String   @default("standard")
   ideation                 Json?
   payload                  Json?

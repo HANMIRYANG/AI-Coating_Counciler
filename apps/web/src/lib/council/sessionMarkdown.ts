@@ -61,6 +61,25 @@ function coveredClaimLines(claims: FinalAnswer["coveredClaims"]): string[] {
   );
 }
 
+function retrievalGuardLines(
+  guard: SynthesisResult["retrievalGuard"],
+): string[] {
+  if (!guard) return [];
+  const lines = [
+    "",
+    "### 근거 가드 (Retrieval Guard)",
+    "",
+    `- 상태: ${guard.guardStatus}`,
+    `- 업체 발송 가능: ${guard.businessCitationReady ? "예" : "아니오"}`,
+    `- 권장 조치: ${guard.recommendedAction.trim().length > 0 ? guard.recommendedAction : "없음"}`,
+  ];
+  if (guard.reasons.length > 0) {
+    lines.push("- 사유:");
+    lines.push(...guard.reasons.map((r) => `  - ${r}`));
+  }
+  return lines;
+}
+
 function providerSummaryLines(
   summary: FinalAnswer["providerSummary"],
 ): string[] {
@@ -132,6 +151,7 @@ export function buildSessionMarkdown(session: ExportableSession): string {
     "## 근거 커버리지",
     "",
     `- 상태: ${a.evidenceCoverageStatus}`,
+    ...retrievalGuardLines(a.retrievalGuard),
     "",
     "### 사용된 근거",
     "",
@@ -227,6 +247,7 @@ function buildIdeationMarkdown(
     "## 근거 커버리지",
     "",
     `- 상태: ${a.evidenceCoverageStatus}`,
+    ...retrievalGuardLines(a.retrievalGuard),
     "",
     "### 사용된 근거",
     "",
@@ -316,6 +337,7 @@ function buildChecklistMarkdown(
     "## 근거 커버리지",
     "",
     `- 상태: ${a.evidenceCoverageStatus}`,
+    ...retrievalGuardLines(a.retrievalGuard),
     "",
     "### 사용된 근거",
     "",

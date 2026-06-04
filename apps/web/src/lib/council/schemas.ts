@@ -117,6 +117,29 @@ export const CoveredClaimSchema = z.object({
 });
 export type CoveredClaim = z.infer<typeof CoveredClaimSchema>;
 
+// ── Retrieval Guard (citation sufficiency gate) ───────────────────────
+// Deterministic gate result computed by `lib/council/retrievalGuard.ts` AFTER
+// applyEvidenceUsage. It does NOT rewrite the answer — it only classifies
+// whether the (already validated) evidence usage is strong enough to call the
+// answer business-citation-ready. Optional/defaulted so older stored answers
+// (and ai_only) parse unchanged.
+export const GuardStatusSchema = z.enum([
+  "not_required", // ai_only low-risk — guard not applicable
+  "passed", // evidence validated + sufficient for business citation
+  "warning", // usable as internal advisory; needs human review before sending
+  "blocked", // evidence required but absent/unusable → not for business use
+]);
+export type GuardStatus = z.infer<typeof GuardStatusSchema>;
+
+export const RetrievalGuardResultSchema = z.object({
+  guardStatus: GuardStatusSchema.default("not_required"),
+  reasons: z.array(z.string()).default([]),
+  requiredEvidence: z.boolean().default(false),
+  businessCitationReady: z.boolean().default(false),
+  recommendedAction: z.string().default(""),
+});
+export type RetrievalGuardResult = z.infer<typeof RetrievalGuardResultSchema>;
+
 export const FinalAnswerSchema = z.object({
   // Discriminator for the synthesis output union. Standard technical-review
   // style answers are tagged "standard"; ideation-mode answers use the
@@ -153,6 +176,9 @@ export const FinalAnswerSchema = z.object({
   coveredClaims: z.array(CoveredClaimSchema).default([]),
   uncoveredClaims: z.array(z.string()).default([]),
   evidenceCoverageStatus: EvidenceCoverageStatusSchema.default("not_requested"),
+  // Optional Retrieval Guard result (citation sufficiency gate). Attached by
+  // the orchestrator after applyEvidenceUsage; absent on older stored answers.
+  retrievalGuard: RetrievalGuardResultSchema.optional(),
 });
 export type FinalAnswer = z.infer<typeof FinalAnswerSchema>;
 
@@ -211,6 +237,9 @@ export const IdeationFinalAnswerSchema = z.object({
   coveredClaims: z.array(CoveredClaimSchema).default([]),
   uncoveredClaims: z.array(z.string()).default([]),
   evidenceCoverageStatus: EvidenceCoverageStatusSchema.default("not_requested"),
+  // Optional Retrieval Guard result (citation sufficiency gate). Attached by
+  // the orchestrator after applyEvidenceUsage; absent on older stored answers.
+  retrievalGuard: RetrievalGuardResultSchema.optional(),
 });
 export type IdeationFinalAnswer = z.infer<typeof IdeationFinalAnswerSchema>;
 
@@ -267,6 +296,9 @@ export const CertificationChecklistFinalAnswerSchema = z.object({
   coveredClaims: z.array(CoveredClaimSchema).default([]),
   uncoveredClaims: z.array(z.string()).default([]),
   evidenceCoverageStatus: EvidenceCoverageStatusSchema.default("not_requested"),
+  // Optional Retrieval Guard result (citation sufficiency gate). Attached by
+  // the orchestrator after applyEvidenceUsage; absent on older stored answers.
+  retrievalGuard: RetrievalGuardResultSchema.optional(),
 });
 export type CertificationChecklistFinalAnswer = z.infer<
   typeof CertificationChecklistFinalAnswerSchema

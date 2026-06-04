@@ -194,6 +194,26 @@ describe("Runtime persistence wiring — dual mode (memory default, prisma opt-i
     }
   });
 
+  it("persists the canonical full final-answer payload for ALL answer kinds", () => {
+    // `payload` must be written unconditionally (the full answer), so fields
+    // without a dedicated column — e.g. retrievalGuard — survive a round-trip.
+    expect(prismaStoreSrc).toMatch(
+      /payload:\s*fa as unknown as Prisma\.InputJsonValue/,
+    );
+    // Standard reconstruction prefers the canonical payload.
+    expect(prismaStoreSrc).toMatch(/FinalAnswerSchema\.parse\(r\.payload\)/);
+    // Regression guard: payload must NOT be set to DbNull conditionally on the
+    // "standard" answerKind (the original bug that dropped retrievalGuard).
+    expect(prismaStoreSrc).not.toMatch(
+      /payload:[\s\S]{0,120}answerKind === "standard"[\s\S]{0,40}Prisma\.DbNull/,
+    );
+  });
+
+  it("schema documents `payload` as the canonical full final-answer payload", () => {
+    const body = modelBody("FinalAnswer");
+    expect(body.toLowerCase()).toMatch(/canonical full final-answer payload/);
+  });
+
   it("PrismaSessionStore.appendAttempt is fire-and-forget", () => {
     // The forensic attempt log must not block the orchestrator. The
     // implementation must use `void this.client...create(...)` rather

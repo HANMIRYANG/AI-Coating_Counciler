@@ -1,14 +1,15 @@
-// Pure presentation logic for the final-answer evidence coverage block
-// (Step 11). The React component (`FinalEvidenceCoveragePanel.tsx`) is a
-// thin renderer over the view-model produced here, so the decision logic is
-// unit-testable under the repo's node-env vitest (no DOM / RTL).
+// Pure presentation logic for the final-answer evidence coverage block.
+// The React component (`FinalEvidenceCoveragePanel.tsx`) is a thin renderer
+// over the view-model produced here, so the decision logic is unit-testable
+// under the repo's node-env vitest (no DOM / RTL).
 //
-// Display-only: it visualizes the Step 10 evidence usage contract on the
-// final answer. No verified-citation enforcement, no model re-checking, no
-// semantic RAG. Never renders full chunk bodies; internal ids are used only
-// as React keys, never displayed.
+// Display-only: it visualizes the evidence usage contract + the Retrieval
+// Guard verdict on the final answer. The guard is a citation-sufficiency
+// status gate, NOT a legal certification of truth. Never renders full chunk
+// bodies; internal ids are used only as React keys, never displayed.
 
-import type { FinalAnswer } from "@/lib/council/schemas";
+import type { FinalAnswer, GuardStatus } from "@/lib/council/schemas";
+import { GUARD_STATUS_LABEL } from "@/lib/council/retrievalGuard";
 
 export type FinalCoverageTone = "good" | "info" | "muted" | "warn";
 
@@ -24,6 +25,14 @@ export type CoveredClaimView = {
   refCount: number;
 };
 
+export type GuardView = {
+  statusLabel: string;
+  tone: FinalCoverageTone;
+  businessReady: boolean;
+  recommendedAction: string;
+  reasons: string[];
+};
+
 export type FinalEvidenceCoverageView = {
   // false for not_requested (ai_only) → quiet UI.
   visible: boolean;
@@ -34,6 +43,15 @@ export type FinalEvidenceCoverageView = {
   evidenceRefs: EvidenceRefView[];
   coveredClaims: CoveredClaimView[];
   uncoveredClaims: string[];
+  // Retrieval Guard verdict (present only when the answer carries one).
+  guard?: GuardView;
+};
+
+const GUARD_TONE: Record<GuardStatus, FinalCoverageTone> = {
+  not_required: "muted",
+  passed: "good",
+  warning: "warn",
+  blocked: "warn",
 };
 
 const HIDDEN: FinalEvidenceCoverageView = {
@@ -75,7 +93,21 @@ type CoverageFields = Pick<
   | "evidenceUsed"
   | "coveredClaims"
   | "uncoveredClaims"
+  | "retrievalGuard"
 >;
+
+function buildGuardView(
+  guard: FinalAnswer["retrievalGuard"],
+): GuardView | undefined {
+  if (!guard) return undefined;
+  return {
+    statusLabel: GUARD_STATUS_LABEL[guard.guardStatus] ?? guard.guardStatus,
+    tone: GUARD_TONE[guard.guardStatus] ?? "info",
+    businessReady: guard.businessCitationReady,
+    recommendedAction: guard.recommendedAction,
+    reasons: guard.reasons,
+  };
+}
 
 /**
  * Derive the coverage block view-model from a final answer.
@@ -113,5 +145,6 @@ export function buildFinalEvidenceCoverageView(
       refCount: c.evidenceChunkIds.length,
     })),
     uncoveredClaims,
+    guard: buildGuardView(answer?.retrievalGuard),
   };
 }

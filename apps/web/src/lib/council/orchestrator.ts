@@ -81,6 +81,7 @@ import {
 } from "./evidencePreview";
 import { fetchSources } from "./sourceFetch";
 import { applyEvidenceUsage } from "./evidenceUsage";
+import { applyRetrievalGuard } from "./retrievalGuard";
 
 export type TimingConfig = {
   providerTimeoutMs: number;
@@ -295,7 +296,16 @@ export class CouncilOrchestrator {
       // session evidence preview. ai_only → not_requested; ok preview with no
       // model mapping → conservative partial; no_matches/unavailable/failed →
       // reflected. Never auto-asserts "sufficient".
-      const finalAns = applyEvidenceUsage(synthesized, evidencePreview);
+      const withEvidence = applyEvidenceUsage(synthesized, evidencePreview);
+
+      // Retrieval Guard: classify whether the validated evidence usage is
+      // strong enough for business citation, and what to do if not. Pure +
+      // deterministic; attaches `retrievalGuard` without rewriting the answer.
+      const finalAns = applyRetrievalGuard(withEvidence, {
+        taskType: sess.taskType,
+        evidenceMode: sess.evidenceMode,
+        retrievalStatus: evidencePreview?.retrievalStatus,
+      });
 
       // ─── Final state ────────────────────────────────────────────────
       // Fix 3: reflect Round 2 outcome — a "completed" session requires both

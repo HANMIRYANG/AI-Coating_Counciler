@@ -114,3 +114,49 @@ describe("buildFinalEvidenceCoverageView — sufficient", () => {
     expect(view.coveredClaims[0]).not.toHaveProperty("evidenceChunkIds");
   });
 });
+
+describe("buildFinalEvidenceCoverageView — retrieval guard", () => {
+  it("surfaces a passed guard (business-ready) on a visible view", () => {
+    const view = buildFinalEvidenceCoverageView({
+      ...coverage({
+        evidenceCoverageStatus: "sufficient",
+        evidenceUsed: [ref],
+        coveredClaims: [{ claim: "x", evidenceChunkIds: ["chunk_SECRET"] }],
+      }),
+      retrievalGuard: {
+        guardStatus: "passed",
+        reasons: ["검증됨"],
+        requiredEvidence: true,
+        businessCitationReady: true,
+        recommendedAction: "발송 가능",
+      },
+    });
+    expect(view.guard).toBeDefined();
+    expect(view.guard?.statusLabel).toBe("발송 가능");
+    expect(view.guard?.tone).toBe("good");
+    expect(view.guard?.businessReady).toBe(true);
+  });
+
+  it("maps a blocked guard to a warn tone", () => {
+    const view = buildFinalEvidenceCoverageView({
+      ...coverage({ evidenceCoverageStatus: "no_evidence" }),
+      retrievalGuard: {
+        guardStatus: "blocked",
+        reasons: ["근거 없음"],
+        requiredEvidence: true,
+        businessCitationReady: false,
+        recommendedAction: "발송 금지",
+      },
+    });
+    expect(view.guard?.statusLabel).toBe("발송 차단");
+    expect(view.guard?.tone).toBe("warn");
+    expect(view.guard?.businessReady).toBe(false);
+  });
+
+  it("omits guard when the answer carries none", () => {
+    const view = buildFinalEvidenceCoverageView(
+      coverage({ evidenceCoverageStatus: "partial", evidenceUsed: [ref] }),
+    );
+    expect(view.guard).toBeUndefined();
+  });
+});
