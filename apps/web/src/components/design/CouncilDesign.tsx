@@ -226,7 +226,7 @@ const TASK_MODES: Array<{ value: TaskType; label: string; hint: string }> = [
   {
     value: "document_based_answer",
     label: "문서 기반 답변",
-    hint: "사내 문서 기반 답변 (RAG 미연결)",
+    hint: "사내 문서 근거 기반 답변 (근거 모드 필요)",
   },
   {
     value: "customer_reply",

@@ -12,5 +12,8 @@
     "test": "npm run test --workspace apps/web",
     "test:e2e": "npm run test:e2e --workspace apps/web",
     "lint": "npm run lint --workspace apps/web"
+  },
+  "engines": {
+    "node": ">=20 <23"
   }
 }

@@ -38,7 +38,7 @@ test.describe("home page smoke", () => {
     await expect(ideationBtn).toHaveAttribute("aria-pressed", "true");
   });
 
-  test("evidence mode group is selectable; external lookup is disabled", async ({
+  test("evidence mode group is selectable, incl. external official-source lookup", async ({
     page,
   }) => {
     const group = page.getByRole("group", { name: "근거 모드 선택" });
@@ -48,12 +48,18 @@ test.describe("home page smoke", () => {
     await internalBtn.click();
     await expect(internalBtn).toHaveAttribute("aria-pressed", "true");
 
-    // internal_docs_web (external official-source lookup) is offered but not
-    // wired yet → disabled "준비 중".
+    // internal_docs_web (user-provided official-source URL fetch) is now wired
+    // and selectable; choosing it reveals the URL input. (Catalog-based
+    // AUTOMATIC official-source lookup is still not implemented.)
     const externalBtn = group.getByRole("button", {
       name: /사내 자료 \+ 공식 출처/,
     });
-    await expect(externalBtn).toBeDisabled();
+    await expect(externalBtn).toBeEnabled();
+    await externalBtn.click();
+    await expect(externalBtn).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      page.getByRole("heading", { name: /공식 출처 URL/ }),
+    ).toBeVisible();
   });
 
   test("'AI 가이드' chip toggles the usage guide", async ({ page }) => {

@@ -12,7 +12,9 @@
 // 이 경로는 Prisma(Postgres) 전용이라 DB 미구성 시 API 가 503 을 반환하며,
 // 이 화면은 그 메시지를 그대로 노출한다.
 //
-// 문서 삭제/수정, 임베딩·벡터(의미 기반) 검색은 이번 범위 밖(별도 작업).
+// 문서 삭제/수정은 이번 범위 밖(별도 작업). 의미 기반(임베딩·벡터/하이브리드)
+// 검색은 구현되어 council evidence 경로에서 쓰이지만(lib/documents/vectorSearch.ts
+// + POST /api/documents/embeddings/backfill), 이 화면의 검색창은 키워드 전용이다.
 //
 // 서버 전용 모듈(@prisma/client 를 끌어오는 service.ts/search.ts)을 client
 // 번들에 넣지 않기 위해 응답 타입은 로컬에 다시 선언한다. blobStorage 는 zod

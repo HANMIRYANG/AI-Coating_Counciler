@@ -79,11 +79,14 @@ Ideation Mode 는 다음과 같은 **선행 단계** 작업을 지원합니다.
 
 > **구현 상태:** 모든 taskType 의 **prompt-level 분기**는
 > `prompts.ts:taskTypeGuidance()` 로 구현되어 있다(8종 전부). 추가로
-> `application_ideas` 는 Round 3 synthesis 에서 전용 `IdeationFinalAnswer`
-> 스키마로 분기한다(구현됨). 그 외 taskType 의 출력 스키마는 공용
-> `FinalAnswer` 를 유지하며, 표(위)의 "출력 스키마" 차이는 현재 별도 스키마가
-> 아니라 prompt 가이던스 수준의 차이다(certification_checklist 의 체크리스트
-> 전용 스키마 등은 아직 미구현).
+> `application_ideas` 는 전용 `IdeationFinalAnswer` 스키마로,
+> `certification_checklist` 는 전용 `CertificationChecklistFinalAnswer`
+> 스키마로 Round 3 synthesis 에서 각각 분기한다(둘 다 구현됨 —
+> `schemas.ts`, `orchestrator.ts` 의 synthesis 분기 + 전용 safety guard).
+> 그 외 taskType (`technical_review` / `test_report_interpretation` /
+> `document_based_answer` / `customer_reply` / `proposal_copy` /
+> `risky_phrase_review`) 의 출력 스키마는 공용 `FinalAnswer` 를 유지하며,
+> 표(위)의 "출력 스키마" 차이는 prompt 가이던스 수준의 차이다.
 
 ### 1.4 Ideation 출력 구조 (구현됨)
 

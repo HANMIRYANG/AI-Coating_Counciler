@@ -110,7 +110,8 @@ Vercel Project → Settings → Environment Variables 에 설정합니다.
 - **지연 추출**: 저장된 원본은 `POST /api/documents/:id/extract` 로 필요 시 서버에서 가져와
   text-layer/OCR 추출 후 chunk 를 부착하고 `chunked` 로 승격합니다(OCR 은 `DOCUMENT_OCR_PROVIDER`
   설정 시; 미설정이면 503 `ocr_unavailable`).
-- **미구현**: 임베딩/벡터(의미 기반) 검색, 공개 다운로드 UI.
+- **미구현**: 공개 다운로드 UI. (의미 기반 임베딩/벡터·하이브리드 검색은 구현됨 —
+  단, 지연추출된 청크는 `POST /api/documents/embeddings/backfill` 로 임베딩한다.)
 
 ---
 
@@ -136,7 +137,7 @@ Vercel Project → Settings → Environment Variables 에 설정합니다.
 ## 6. 범위 밖 (이번 단계 미구현)
 
 - 공개 다운로드 UI (Blob 원본)
-- 임베딩 / 벡터(의미 기반) 검색
+- pgvector 인덱스 (의미 기반 임베딩/벡터·하이브리드 검색 자체는 구현됨 — 현재는 앱레벨 코사인)
 - 기관 카탈로그 기반 자동 출처 조회 (사용자 제공 URL 조회는 internal_docs_web 로 구현됨)
 - 큐(provider) 통합
-- 검증된 citation 강제
+- 검증된 citation 강제 (모델 prose 의 chunk grounding 강제)
