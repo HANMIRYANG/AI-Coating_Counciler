@@ -10,8 +10,10 @@
 // chunk / embed the binary. The existing inline text/markdown intake
 // (POST /api/documents) is unchanged.
 //
-// Requires `BLOB_READ_WRITE_TOKEN`. The blob store should use PRIVATE access;
-// the resulting blob URL is treated as internal and is not exposed elsewhere.
+// Requires `BLOB_READ_WRITE_TOKEN`. The blob store uses PUBLIC access with an
+// unguessable random-suffix pathname (addRandomSuffix below); the resulting
+// blob URL is treated as internal and is not exposed elsewhere. The client
+// `upload({ access })` MUST match the store's configured access mode.
 
 import { NextResponse } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";

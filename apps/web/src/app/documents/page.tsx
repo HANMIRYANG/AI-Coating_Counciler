@@ -257,7 +257,10 @@ export default function DocumentsPage() {
     setBlobUploading(true);
     try {
       await upload(buildOriginalBlobPathname(blobFile.name), blobFile, {
-        access: "private",
+        // Public store + unguessable random-suffix path (addRandomSuffix in the
+        // upload route). The URL is treated as internal and never exposed by the
+        // app. Must match the Vercel Blob store's access mode.
+        access: "public",
         handleUploadUrl: "/api/documents/blob/upload",
         clientPayload: JSON.stringify({
           filename: blobFile.name,
