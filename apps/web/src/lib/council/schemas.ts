@@ -42,6 +42,24 @@ export const TechnicalAssessmentItemSchema = z.object({
   detail: z.string(),
 });
 
+// Models occasionally return confidence on a 0–100 (percentage) or other scale
+// instead of the required 0–1. Rather than discard the ENTIRE opinion over an
+// advisory field, coerce into range: treat (1, 100] as a percentage, clamp the
+// rest. Non-numbers pass through so the inner schema's default still applies.
+const UnitScoreSchema = z.preprocess((v) => {
+  if (typeof v !== "number" || !Number.isFinite(v)) return v;
+  let n = v;
+  if (n > 1) n = n <= 100 ? n / 100 : 1;
+  if (n < 0) n = 0;
+  return n;
+}, z.number().min(0).max(1).default(0.5));
+
+// Confidence delta in [-1, 1]; clamp out-of-range numbers (same rationale).
+const ConfidenceAdjustmentSchema = z.preprocess((v) => {
+  if (typeof v !== "number" || !Number.isFinite(v)) return v;
+  return Math.max(-1, Math.min(1, v));
+}, z.number().min(-1).max(1).default(0));
+
 export const ProviderOpinionSchema = z.object({
   providerId: ProviderIdSchema,
   model: z.string().optional(),
@@ -53,7 +71,7 @@ export const ProviderOpinionSchema = z.object({
   risks: z.array(RiskItemSchema).default([]),
   unsafePhrases: z.array(UnsafePhraseItemSchema).default([]),
   recommendedAnswer: z.string().default(""),
-  confidenceScore: z.number().min(0).max(1).default(0.5),
+  confidenceScore: UnitScoreSchema,
   followUpQuestions: z.array(z.string()).default([]),
 });
 export type ProviderOpinion = z.infer<typeof ProviderOpinionSchema>;
@@ -79,7 +97,7 @@ export const ProviderCritiqueSchema = z.object({
   missingEvidenceFound: z.array(z.string()).default([]),
   recommendedCorrections: z.array(z.string()).default([]),
   providerSpecificCritiques: z.array(ProviderSpecificCritiqueSchema).default([]),
-  confidenceAdjustment: z.number().min(-1).max(1).default(0),
+  confidenceAdjustment: ConfidenceAdjustmentSchema,
 });
 export type ProviderCritique = z.infer<typeof ProviderCritiqueSchema>;
 
@@ -156,7 +174,7 @@ export const FinalAnswerSchema = z.object({
   unsafePhrases: z.array(UnsafePhraseItemSchema).default([]),
   recommendedSafeWording: z.array(z.string()).default([]),
   riskLevel: RiskLevelSchema.default("low"),
-  confidenceScore: z.number().min(0).max(1).default(0.5),
+  confidenceScore: UnitScoreSchema,
   followUpQuestions: z.array(z.string()).default([]),
   unresolvedDisagreements: z.array(z.string()).default([]),
   providerSummary: z
@@ -219,7 +237,7 @@ export const IdeationFinalAnswerSchema = z.object({
   unsafePhrases: z.array(UnsafePhraseItemSchema).default([]),
   recommendedSafeWording: z.array(z.string()).default([]),
   riskLevel: RiskLevelSchema.default("medium"),
-  confidenceScore: z.number().min(0).max(1).default(0.5),
+  confidenceScore: UnitScoreSchema,
   // Provider/session bookkeeping — kept parallel to FinalAnswer so the store,
   // API serializer and markdown export can treat both shapes uniformly.
   providerSummary: z
@@ -279,7 +297,7 @@ export const CertificationChecklistFinalAnswerSchema = z.object({
   unsafePhrases: z.array(UnsafePhraseItemSchema).default([]),
   recommendedSafeWording: z.array(z.string()).default([]),
   riskLevel: RiskLevelSchema.default("medium"),
-  confidenceScore: z.number().min(0).max(1).default(0.5),
+  confidenceScore: UnitScoreSchema,
   // Provider/session bookkeeping — parallel to FinalAnswer.
   providerSummary: z
     .array(

@@ -13,3 +13,12 @@
 if (process.env.REAL_PROVIDER_SMOKE !== "true") {
   process.env.USE_MOCK_PROVIDERS = "true";
 }
+
+// Vitest loads apps/web/.env into process.env. A developer's .env may set
+// SESSION_STORE=prisma + a real DATABASE_URL (Neon) for local/prod parity —
+// which would push getSessionStore() onto the Prisma backend and make unit
+// tests hit a real database. Force the in-memory store unless a test explicitly
+// opts into the Prisma integration suite (PRISMA_INTEGRATION=1).
+if (process.env.PRISMA_INTEGRATION !== "1") {
+  process.env.SESSION_STORE = "memory";
+}

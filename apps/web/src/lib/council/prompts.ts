@@ -295,7 +295,7 @@ ${JSON_RULES_KO}
   "risks": [{ "description": string, "severity": "low"|"medium"|"high"|"critical" }],
   "unsafePhrases": [{ "phrase": string, "reason"?: string, "recommended"?: string }],
   "recommendedAnswer": string,
-  "confidenceScore": number,
+  "confidenceScore": number,            // 0.0 ~ 1.0 사이의 소수 (백분율 아님)
   "followUpQuestions": string[]
 }
 
@@ -343,7 +343,7 @@ ${JSON_RULES_KO}
   "missingEvidenceFound": string[],
   "recommendedCorrections": string[],
   "providerSpecificCritiques": [{ "targetProviderId": "openai"|"anthropic"|"gemini", "critique": string }],
-  "confidenceAdjustment": number
+  "confidenceAdjustment": number       // -1.0 ~ 1.0 사이의 소수
 }
 
 위험 표현은 ${KNOWN_DANGEROUS_PHRASES_LIST} 등이 포함되어 있는지 반드시 점검하세요.`;
@@ -404,7 +404,7 @@ ${synthesisEvidenceMappingGuidance(input.evidenceContext)}
   "unsafePhrases": [{ "phrase": string, "reason"?: string, "recommended"?: string }],
   "recommendedSafeWording": string[],
   "riskLevel": "low"|"medium"|"high"|"critical",
-  "confidenceScore": number,
+  "confidenceScore": number,            // 0.0 ~ 1.0 사이의 소수 (백분율 아님)
   "followUpQuestions": string[],
   "unresolvedDisagreements": string[],
   "providerSummary": [{ "providerId": "openai"|"anthropic"|"gemini", "status": string, "latencyMs"?: number }],
@@ -493,7 +493,7 @@ ${synthesisEvidenceMappingGuidance(input.evidenceContext)}
   "unsafePhrases": [{ "phrase": string, "reason"?: string, "recommended"?: string }],
   "recommendedSafeWording": string[],
   "riskLevel": "low"|"medium"|"high"|"critical",
-  "confidenceScore": number,
+  "confidenceScore": number,            // 0.0 ~ 1.0 사이의 소수 (백분율 아님)
   "providerSummary": [{ "providerId": "openai"|"anthropic"|"gemini", "status": string, "latencyMs"?: number }],
   ${EVIDENCE_OUTPUT_SCHEMA_FIELDS_KO}
 }
@@ -578,7 +578,7 @@ ${synthesisEvidenceMappingGuidance(input.evidenceContext)}
   "unsafePhrases": [{ "phrase": string, "reason"?: string, "recommended"?: string }],
   "recommendedSafeWording": string[],
   "riskLevel": "low"|"medium"|"high"|"critical",
-  "confidenceScore": number,
+  "confidenceScore": number,            // 0.0 ~ 1.0 사이의 소수 (백분율 아님)
   "providerSummary": [{ "providerId": "openai"|"anthropic"|"gemini", "status": string, "latencyMs"?: number }],
   ${EVIDENCE_OUTPUT_SCHEMA_FIELDS_KO}
 }
